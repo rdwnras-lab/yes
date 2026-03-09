@@ -1,1205 +1,1240 @@
 --[[
-    FILE: vechnost_v3.lua
+    FILE: vechnost_gui.lua
     BRAND: Vechnost
-    VERSION: 3.0.0
-    DESC: Fish It - Webhook Logger + Auto Trading System
-          BAC (Blox Anti Cheat) Bypass included
-          Uses RF/CanSendTrade (correct Fish It remote)
-          Sidebar navigation (Webhook | Trading | Settings)
+    VERSION: 2.0.0
+    DESC: Custom GUI Framework - Sidebar Layout
+          Dark Blue Glassmorphism Style
+          Tab kiri (icon+teks) | Divider | Konten kanan
 ]]
 
 -- =====================================================
--- BAGIAN 0: BAC BYPASS SYSTEM
+-- CLEANUP: Hapus GUI lama
 -- =====================================================
--- Blox Anti Cheat mendeteksi: getfenv, hookfunction,
--- metatable hooks, dan suspicious remote fire patterns.
--- Bypass: localize semua globals, random delays,
--- SafeFire wrapper, task.defer untuk break stack trace.
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
-local _rawget    = rawget
-local _rawset    = rawset
-local _pairs     = pairs
-local _ipairs    = ipairs
-local _pcall     = pcall
-local _tostring  = tostring
-local _type      = type
-local _math      = math
-local _string    = string
-local _table     = table
-local _task      = task
-local _game      = game
-local _workspace = workspace
-
--- Random delay helper: humanizes timing agar BAC tidak detect pattern
-local function RandDelay(base, variance)
-    variance = variance or 0.15
-    return base + (_math.random() * variance * 2) - variance
-end
-
--- SafeFire: wrap remote call dalam task.spawn + pcall
--- Ini break call-stack chain yang BAC gunakan untuk detect exploit
-local function SafeFire(remote, ...)
-    if not remote then return false end
-    local args = {...}
-    local success = false
-    local done    = false
-    _task.spawn(function()
-        _task.wait(RandDelay(0.04, 0.02))
-        _pcall(function()
-            if remote:IsA("RemoteFunction") then
-                remote:InvokeServer(_table.unpack(args))
-            else
-                remote:FireServer(_table.unpack(args))
-            end
-            success = true
-        end)
-        done = true
-    end)
-    local t = 0
-    repeat _task.wait(0.05); t = t + 0.05 until done or t >= 3
-    return success
-end
+local GUI_NAME = "VechnostGUI_v2"
+local old = CoreGui:FindFirstChild(GUI_NAME)
+if old then old:Destroy() end
 
 -- =====================================================
--- BAGIAN 1: CLEANUP SYSTEM
+-- KONSTANTA DESAIN
 -- =====================================================
-local CoreGui   = _game:GetService("CoreGui")
-local GUI_NAMES = { Main="Vechnost_Main_UI", Mobile="Vechnost_Mobile_Button" }
+local THEME = {
+    -- Background utama (biru gelap transparan)
+    BgMain        = Color3.fromRGB(8, 16, 36),
+    BgMainAlpha   = 0.18,  -- transparansi utama
 
-for _, v in _pairs(CoreGui:GetChildren()) do
-    for _, name in _pairs(GUI_NAMES) do
-        if v.Name == name then _pcall(function() v:Destroy() end) end
-    end
-end
+    -- Sidebar kiri
+    Sidebar       = Color3.fromRGB(10, 20, 50),
+    SidebarAlpha  = 0.55,
 
--- =====================================================
--- BAGIAN 2: SERVICES & GLOBALS
--- =====================================================
-local Players           = _game:GetService("Players")
-local ReplicatedStorage = _game:GetService("ReplicatedStorage")
-local HttpService       = _game:GetService("HttpService")
-local RunService        = _game:GetService("RunService")
-local UserInputService  = _game:GetService("UserInputService")
-local TextChatService   = _game:GetService("TextChatService")
+    -- Tab aktif
+    TabActive     = Color3.fromRGB(30, 90, 220),
+    TabActiveAlpha= 0.75,
 
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui   = LocalPlayer:WaitForChild("PlayerGui")
+    -- Tab hover
+    TabHover      = Color3.fromRGB(20, 55, 140),
+    TabHoverAlpha = 0.50,
 
--- =====================================================
--- BAGIAN 3: LOAD GAME REMOTES
--- =====================================================
-local net, ObtainedNewFish, CanSendTradeRemote
+    -- Tab normal
+    TabNormal     = Color3.fromRGB(0, 0, 0),
+    TabNormalAlpha= 0.0,
 
-do
-    _pcall(function()
-        net = ReplicatedStorage
-            :WaitForChild("Packages", 10)
-            :WaitForChild("_Index", 5)
-            :WaitForChild("sleitnick_net@0.2.0", 5)
-            :WaitForChild("net", 5)
-        ObtainedNewFish = net:WaitForChild("RE/ObtainedNewFishNotification", 5)
-    end)
+    -- Divider
+    Divider       = Color3.fromRGB(60, 120, 255),
+    DividerAlpha  = 0.35,
 
-    -- Load RF/CanSendTrade (confirmed dari console Fish It)
-    if net then
-        _pcall(function()
-            CanSendTradeRemote = net:WaitForChild("RF/CanSendTrade", 5)
-            if CanSendTradeRemote then
-                warn("[Vechnost] Trade remote loaded: RF/CanSendTrade")
-            end
-        end)
-    end
+    -- Panel konten kanan
+    PanelBg       = Color3.fromRGB(10, 22, 55),
+    PanelAlpha    = 0.30,
 
-    -- Fallback scan jika nama berubah
-    if not CanSendTradeRemote and net then
-        _pcall(function()
-            for _, child in _ipairs(net:GetDescendants()) do
-                if child:IsA("RemoteFunction") or child:IsA("RemoteEvent") then
-                    local ln = _string.lower(child.Name)
-                    if ln:find("trade") or ln:find("senditem") or ln:find("giveitem") then
-                        CanSendTradeRemote = child
-                        warn("[Vechnost] Trade remote (scan):", child.Name)
-                        break
-                    end
-                end
-            end
-        end)
-    end
+    -- Teks
+    TextPrimary   = Color3.fromRGB(220, 235, 255),
+    TextSecondary = Color3.fromRGB(140, 170, 220),
+    TextMuted     = Color3.fromRGB(80, 110, 170),
+    TextAccent    = Color3.fromRGB(90, 160, 255),
 
-    if not CanSendTradeRemote then
-        warn("[Vechnost] WARNING: Trade remote tidak ditemukan")
-    end
-end
+    -- Aksen / glow
+    Accent        = Color3.fromRGB(60, 140, 255),
+    AccentGlow    = Color3.fromRGB(30, 80, 200),
 
--- =====================================================
--- BAGIAN 4: LOAD RAYFIELD
--- =====================================================
-local Rayfield
-do
-    local ok, result = _pcall(function()
-        return loadstring(_game:HttpGet("https://sirius.menu/rayfield"))()
-    end)
-    if ok and result then
-        Rayfield = result
-        warn("[Vechnost] Rayfield loaded OK")
-    else
-        warn("[Vechnost] ERROR loading Rayfield:", result)
-        return
-    end
-end
+    -- Input / Section
+    InputBg       = Color3.fromRGB(12, 28, 70),
+    InputBgAlpha  = 0.65,
+    SectionLine   = Color3.fromRGB(40, 80, 180),
 
--- =====================================================
--- BAGIAN 5: FISH DATABASE
--- =====================================================
-local FishDB       = {}  -- [id] = {Name, Tier, Icon, SellPrice, ItemType}
-local FishNameToId = {}  -- [name/lowercase] = id
+    -- Button
+    BtnBg         = Color3.fromRGB(30, 80, 200),
+    BtnBgAlpha    = 0.70,
+    BtnHover      = Color3.fromRGB(50, 110, 240),
 
-do
-    _pcall(function()
-        local Items = ReplicatedStorage:WaitForChild("Items", 10)
-        if not Items then return end
-        for _, module in _ipairs(Items:GetChildren()) do
-            if module:IsA("ModuleScript") then
-                local ok2, mod = _pcall(require, module)
-                if ok2 and mod and mod.Data then
-                    local d = mod.Data
-                    if d.Id and d.Name then
-                        FishDB[d.Id] = {
-                            Name      = d.Name,
-                            Tier      = d.Tier or 0,
-                            Icon      = d.Icon,
-                            SellPrice = d.SellPrice or d.Value or d.Price or d.Worth or 0,
-                            ItemType  = d.Type or "Unknown",
-                        }
-                        FishNameToId[d.Name]                    = d.Id
-                        FishNameToId[_string.lower(d.Name)]     = d.Id
-                    end
-                end
-            end
-        end
-    end)
-    local count = 0
-    for _ in _pairs(FishDB) do count = count + 1 end
-    warn("[Vechnost] FishDB:", count, "items")
-end
+    -- Toggle On / Off
+    ToggleOn      = Color3.fromRGB(40, 180, 100),
+    ToggleOff     = Color3.fromRGB(50, 60, 90),
 
--- =====================================================
--- BAGIAN 6: REPLION PLAYER DATA
--- =====================================================
-local PlayerData = nil
-do
-    _pcall(function()
-        local Replion = require(ReplicatedStorage.Packages.Replion)
-        PlayerData = Replion.Client:WaitReplion("Data")
-        if PlayerData then warn("[Vechnost] Replion PlayerData OK") end
-    end)
-end
-
--- =====================================================
--- BAGIAN 7: RARITY SYSTEM
--- =====================================================
-local RARITY_MAP = {
-    [1]="Common", [2]="Uncommon", [3]="Rare",   [4]="Epic",
-    [5]="Legendary", [6]="Mythic", [7]="Secret",
+    -- Corner radius
+    CornerMain    = UDim.new(0, 14),
+    CornerCard    = UDim.new(0, 10),
+    CornerBtn     = UDim.new(0, 8),
+    CornerInput   = UDim.new(0, 7),
+    CornerTab     = UDim.new(0, 9),
 }
-local RARITY_NAME_TO_TIER = {
-    Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, Secret=7,
+
+local FONT = {
+    Title   = Enum.Font.GothamBold,
+    Tab     = Enum.Font.GothamSemibold,
+    Label   = Enum.Font.Gotham,
+    Value   = Enum.Font.GothamMedium,
+    Mono    = Enum.Font.RobotoMono,
 }
-local RarityList = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
+
+local SIZE = {
+    Window    = UDim2.fromOffset(680, 420),
+    Sidebar   = UDim2.fromOffset(170, 420),
+    Divider   = UDim2.fromOffset(1, 420),
+    Panel     = UDim2.fromOffset(509, 420),
+    TabHeight = 44,
+    HeaderH   = 52,
+}
 
 -- =====================================================
--- BAGIAN 8: HTTP REQUEST (multi-executor compatible)
+-- HELPER FUNCTIONS
 -- =====================================================
-local HttpRequest =
-    (syn and syn.request)
-    or http_request or request
-    or (fluxus and fluxus.request)
-    or (krnl and krnl.request)
-    or (getgenv and getgenv().request)
+local function New(className, props, children)
+    local inst = Instance.new(className)
+    for k, v in pairs(props or {}) do
+        inst[k] = v
+    end
+    for _, child in ipairs(children or {}) do
+        child.Parent = inst
+    end
+    return inst
+end
 
-if not HttpRequest then warn("[Vechnost][FATAL] HttpRequest tidak tersedia") end
+local function AddCorner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = radius or THEME.CornerCard
+    c.Parent = parent
+    return c
+end
 
--- =====================================================
--- BAGIAN 9: HELPERS
--- =====================================================
-local function FormatNumber(n)
-    if not n or _type(n) ~= "number" then return "0" end
-    local s = _tostring(_math.floor(n))
-    local k
-    repeat s, k = _string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2") until k == 0
+local function AddPadding(parent, t, b, l, r)
+    local p = Instance.new("UIPadding")
+    p.PaddingTop    = UDim.new(0, t or 8)
+    p.PaddingBottom = UDim.new(0, b or 8)
+    p.PaddingLeft   = UDim.new(0, l or 10)
+    p.PaddingRight  = UDim.new(0, r or 10)
+    p.Parent = parent
+    return p
+end
+
+local function AddStroke(parent, color, alpha, thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = color or THEME.Accent
+    s.Transparency = alpha or 0.7
+    s.Thickness = thickness or 1
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = parent
     return s
 end
 
-local function IsRarityAllowed(fishId, allowedRarities)
-    local fish = FishDB[fishId]; if not fish then return false end
-    if not allowedRarities or not next(allowedRarities) then return true end
-    return allowedRarities[fish.Tier] == true
+local function AddGradient(parent, colors, rotation)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(colors or {
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(15, 35, 90)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(5, 12, 35)),
+    })
+    g.Rotation = rotation or 135
+    g.Parent = parent
+    return g
 end
 
-local function ResolvePlayerName(arg)
-    if typeof(arg) == "Instance" and arg:IsA("Player") then return arg.Name end
-    if _type(arg) == "string" then return arg end
-    if _type(arg) == "table" and arg.Name then return _tostring(arg.Name) end
-    return LocalPlayer.Name
+local function Tween(inst, props, duration, style, dir)
+    local info = TweenInfo.new(
+        duration or 0.18,
+        style or Enum.EasingStyle.Quad,
+        dir or Enum.EasingDirection.Out
+    )
+    local t = TweenService:Create(inst, info, props)
+    t:Play()
+    return t
 end
 
-local function ExtractMutation(weightData, item)
-    local mutation
-    if weightData and _type(weightData) == "table" then
-        mutation = weightData.Mutation or weightData.Variant or weightData.VariantID
-    end
-    if not mutation and item then
-        mutation = item.Mutation or item.Variant or item.VariantID
-        if not mutation and item.Properties then
-            mutation = item.Properties.Mutation or item.Properties.Variant
-        end
-    end
-    return mutation
+-- Label teks standar
+local function MakeLabel(text, size, font, color, parent)
+    local lbl = New("TextLabel", {
+        Text = text,
+        TextSize = size or 13,
+        Font = font or FONT.Label,
+        TextColor3 = color or THEME.TextPrimary,
+        BackgroundTransparency = 1,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        RichText = true,
+        Parent = parent,
+    })
+    return lbl
 end
 
 -- =====================================================
--- BAGIAN 10: INVENTORY SCAN (Fixed - handles semua format)
+-- ROOT GUI
 -- =====================================================
-local STONE_LIST  = {"Enchant Stone", "Evolved Stone"}
-local STONE_LOWER = {}
-for _, s in _ipairs(STONE_LIST) do STONE_LOWER[_string.lower(s)] = s end
+local ScreenGui = New("ScreenGui", {
+    Name = GUI_NAME,
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    Parent = CoreGui,
+})
 
-local function ScanInventory()
-    local result = { items={}, stones={} }
+-- Shadow backdrop
+local Shadow = New("Frame", {
+    Name = "Shadow",
+    Size = UDim2.fromOffset(SIZE.Window.X.Offset + 24, SIZE.Window.Y.Offset + 24),
+    Position = UDim2.new(0.5, -(SIZE.Window.X.Offset / 2) - 12, 0.5, -(SIZE.Window.Y.Offset / 2) - 12),
+    BackgroundColor3 = Color3.fromRGB(0, 5, 20),
+    BackgroundTransparency = 0.55,
+    BorderSizePixel = 0,
+    Parent = ScreenGui,
+})
+AddCorner(Shadow, UDim.new(0, 18))
 
-    local function classifyItem(name, id)
-        if not name then return end
-        local lname     = _string.lower(name)
-        local stoneCanon = STONE_LOWER[lname]
-        if stoneCanon then
-            result.stones[stoneCanon] = (result.stones[stoneCanon] or 0) + 1
-        else
-            -- Juga cek nama mengandung "stone" / "enchant" / "evolv"
-            if lname:find("stone") or lname:find("enchant") or lname:find("evolv") then
-                result.stones[name] = (result.stones[name] or 0) + 1
+-- Main Window
+local Window = New("Frame", {
+    Name = "Window",
+    Size = SIZE.Window,
+    Position = UDim2.new(0.5, -SIZE.Window.X.Offset / 2, 0.5, -SIZE.Window.Y.Offset / 2),
+    BackgroundColor3 = THEME.BgMain,
+    BackgroundTransparency = THEME.BgMainAlpha,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Parent = ScreenGui,
+})
+AddCorner(Window, THEME.CornerMain)
+AddStroke(Window, THEME.Accent, 0.60, 1.2)
+
+-- Background gradient
+local WinBg = New("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(8, 18, 50),
+    BackgroundTransparency = 0.0,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+    Parent = Window,
+})
+AddGradient(WinBg, {
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 22, 65)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(6, 14, 42)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(4, 10, 30)),
+}, 145)
+
+-- Subtle noise overlay (dots pattern)
+local NoiseOverlay = New("Frame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 1,
+    Parent = Window,
+})
+
+-- =====================================================
+-- DRAG SYSTEM
+-- =====================================================
+local dragging, dragStart, startPos = false, nil, nil
+
+Window.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Window.Position
+    end
+end)
+
+Window.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        local vp = workspace.CurrentCamera.ViewportSize
+        local newX = math.clamp(startPos.X.Offset + delta.X, 0, vp.X - SIZE.Window.X.Offset)
+        local newY = math.clamp(startPos.Y.Offset + delta.Y, 0, vp.Y - SIZE.Window.Y.Offset)
+        Window.Position = UDim2.fromOffset(newX, newY)
+    end
+end)
+
+-- =====================================================
+-- LAYOUT: SIDEBAR | DIVIDER | PANEL
+-- =====================================================
+
+-- === SIDEBAR ===
+local Sidebar = New("Frame", {
+    Name = "Sidebar",
+    Size = SIZE.Sidebar,
+    Position = UDim2.fromOffset(0, 0),
+    BackgroundColor3 = THEME.Sidebar,
+    BackgroundTransparency = THEME.SidebarAlpha,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+    Parent = Window,
+})
+
+-- Sidebar gradient
+AddGradient(Sidebar, {
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(14, 30, 80)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(7, 16, 48)),
+}, 180)
+
+-- Logo / Brand header di sidebar
+local SidebarHeader = New("Frame", {
+    Name = "SidebarHeader",
+    Size = UDim2.new(1, 0, 0, SIZE.HeaderH),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Sidebar,
+})
+
+-- Logo icon (lingkaran aksen)
+local LogoCircle = New("Frame", {
+    Name = "LogoCircle",
+    Size = UDim2.fromOffset(28, 28),
+    Position = UDim2.fromOffset(14, 12),
+    BackgroundColor3 = THEME.Accent,
+    BackgroundTransparency = 0.15,
+    BorderSizePixel = 0,
+    ZIndex = 4,
+    Parent = SidebarHeader,
+})
+AddCorner(LogoCircle, UDim.new(1, 0))
+AddStroke(LogoCircle, THEME.Accent, 0.3, 1.5)
+
+New("TextLabel", {
+    Text = "V",
+    Font = FONT.Title,
+    TextSize = 15,
+    TextColor3 = Color3.fromRGB(255, 255, 255),
+    BackgroundTransparency = 1,
+    Size = UDim2.fromScale(1, 1),
+    TextXAlignment = Enum.TextXAlignment.Center,
+    ZIndex = 5,
+    Parent = LogoCircle,
+})
+
+-- Brand name
+New("TextLabel", {
+    Text = "Vechnost",
+    Font = FONT.Title,
+    TextSize = 15,
+    TextColor3 = THEME.TextPrimary,
+    BackgroundTransparency = 1,
+    Size = UDim2.fromOffset(110, 28),
+    Position = UDim2.fromOffset(48, 12),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 4,
+    Parent = SidebarHeader,
+})
+
+New("TextLabel", {
+    Text = "v2.0.0",
+    Font = FONT.Label,
+    TextSize = 10,
+    TextColor3 = THEME.TextMuted,
+    BackgroundTransparency = 1,
+    Size = UDim2.fromOffset(110, 14),
+    Position = UDim2.fromOffset(48, 30),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 4,
+    Parent = SidebarHeader,
+})
+
+-- Garis bawah header sidebar
+local SidebarDivTop = New("Frame", {
+    Size = UDim2.new(1, -20, 0, 1),
+    Position = UDim2.fromOffset(10, SIZE.HeaderH - 1),
+    BackgroundColor3 = THEME.Accent,
+    BackgroundTransparency = 0.70,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Sidebar,
+})
+
+-- Tab container di sidebar
+local TabContainer = New("ScrollingFrame", {
+    Name = "TabContainer",
+    Size = UDim2.new(1, 0, 1, -SIZE.HeaderH - 50),
+    Position = UDim2.fromOffset(0, SIZE.HeaderH + 6),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 0,
+    CanvasSize = UDim2.fromScale(0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ZIndex = 3,
+    Parent = Sidebar,
+})
+
+New("UIListLayout", {
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Padding = UDim.new(0, 3),
+    Parent = TabContainer,
+})
+AddPadding(TabContainer, 4, 4, 8, 8)
+
+-- Footer sidebar
+local SidebarFooter = New("Frame", {
+    Name = "SidebarFooter",
+    Size = UDim2.new(1, 0, 0, 46),
+    Position = UDim2.new(0, 0, 1, -46),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Sidebar,
+})
+
+-- Garis atas footer
+New("Frame", {
+    Size = UDim2.new(1, -20, 0, 1),
+    Position = UDim2.fromOffset(10, 0),
+    BackgroundColor3 = THEME.Accent,
+    BackgroundTransparency = 0.75,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = SidebarFooter,
+})
+
+-- Close button di footer
+local CloseBtn = New("TextButton", {
+    Text = "✕  Close",
+    Font = FONT.Tab,
+    TextSize = 12,
+    TextColor3 = THEME.TextMuted,
+    BackgroundColor3 = Color3.fromRGB(180, 40, 40),
+    BackgroundTransparency = 0.80,
+    Size = UDim2.new(1, -16, 0, 30),
+    Position = UDim2.fromOffset(8, 9),
+    BorderSizePixel = 0,
+    ZIndex = 4,
+    Parent = SidebarFooter,
+})
+AddCorner(CloseBtn, THEME.CornerBtn)
+
+CloseBtn.MouseEnter:Connect(function()
+    Tween(CloseBtn, { BackgroundTransparency = 0.50, TextColor3 = Color3.fromRGB(255, 100, 100) }, 0.15)
+end)
+CloseBtn.MouseLeave:Connect(function()
+    Tween(CloseBtn, { BackgroundTransparency = 0.80, TextColor3 = THEME.TextMuted }, 0.15)
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+    Tween(Window, { Size = UDim2.fromOffset(0, 0) }, 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+    task.wait(0.3)
+    ScreenGui:Destroy()
+end)
+
+-- === DIVIDER ===
+local Divider = New("Frame", {
+    Name = "Divider",
+    Size = UDim2.fromOffset(1, 420),
+    Position = UDim2.fromOffset(SIZE.Sidebar.X.Offset, 0),
+    BackgroundColor3 = THEME.Divider,
+    BackgroundTransparency = THEME.DividerAlpha,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Window,
+})
+
+-- Glow effect pada divider
+local DivGlow = New("Frame", {
+    Size = UDim2.fromOffset(8, 420),
+    Position = UDim2.fromOffset(-4, 0),
+    BackgroundColor3 = THEME.Accent,
+    BackgroundTransparency = 0.88,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+    Parent = Divider,
+})
+
+-- === PANEL KONTEN KANAN ===
+local Panel = New("Frame", {
+    Name = "Panel",
+    Size = UDim2.new(1, -SIZE.Sidebar.X.Offset - 1, 1, 0),
+    Position = UDim2.fromOffset(SIZE.Sidebar.X.Offset + 1, 0),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+    Parent = Window,
+})
+
+-- Panel header (judul tab aktif)
+local PanelHeader = New("Frame", {
+    Name = "PanelHeader",
+    Size = UDim2.new(1, 0, 0, SIZE.HeaderH),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Panel,
+})
+
+local PanelTitle = New("TextLabel", {
+    Name = "PanelTitle",
+    Text = "Webhook Logger",
+    Font = FONT.Title,
+    TextSize = 17,
+    TextColor3 = THEME.TextPrimary,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -20, 1, 0),
+    Position = UDim2.fromOffset(18, 0),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 4,
+    Parent = PanelHeader,
+})
+
+-- Garis bawah panel header
+New("Frame", {
+    Size = UDim2.new(1, -18, 0, 1),
+    Position = UDim2.fromOffset(9, SIZE.HeaderH - 1),
+    BackgroundColor3 = THEME.Accent,
+    BackgroundTransparency = 0.75,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+    Parent = Panel,
+})
+
+-- Content area (scrollable)
+local ContentArea = New("ScrollingFrame", {
+    Name = "ContentArea",
+    Size = UDim2.new(1, -18, 1, -SIZE.HeaderH - 10),
+    Position = UDim2.fromOffset(9, SIZE.HeaderH + 6),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = THEME.Accent,
+    ScrollBarImageTransparency = 0.5,
+    CanvasSize = UDim2.fromScale(0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ZIndex = 3,
+    Parent = Panel,
+})
+
+New("UIListLayout", {
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Padding = UDim.new(0, 8),
+    Parent = ContentArea,
+})
+AddPadding(ContentArea, 4, 10, 0, 4)
+
+-- =====================================================
+-- COMPONENT LIBRARY
+-- =====================================================
+
+-- Section header
+local function CreateSection(title, parent)
+    local sec = New("Frame", {
+        Name = "Section_" .. title,
+        Size = UDim2.new(1, 0, 0, 26),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = parent or ContentArea,
+        LayoutOrder = 0,
+    })
+
+    New("TextLabel", {
+        Text = string.upper(title),
+        Font = FONT.Title,
+        TextSize = 10,
+        TextColor3 = THEME.TextAccent,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -10, 1, 0),
+        Position = UDim2.fromOffset(0, 0),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        LetterSpacing = 2,
+        ZIndex = 5,
+        Parent = sec,
+    })
+
+    New("Frame", {
+        Size = UDim2.new(1, 0, 0, 1),
+        Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = THEME.SectionLine,
+        BackgroundTransparency = 0.6,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = sec,
+    })
+
+    return sec
+end
+
+-- Input field
+local function CreateInput(labelText, placeholder, callback, parent)
+    local card = New("Frame", {
+        Name = "Input_" .. labelText,
+        Size = UDim2.new(1, 0, 0, 62),
+        BackgroundColor3 = THEME.InputBg,
+        BackgroundTransparency = THEME.InputBgAlpha,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = parent or ContentArea,
+    })
+    AddCorner(card, THEME.CornerInput)
+    AddStroke(card, THEME.Accent, 0.78, 1)
+    AddPadding(card, 8, 8, 12, 12)
+
+    New("TextLabel", {
+        Text = labelText,
+        Font = FONT.Value,
+        TextSize = 12,
+        TextColor3 = THEME.TextSecondary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 16),
+        Position = UDim2.fromOffset(12, 8),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    local box = New("TextBox", {
+        PlaceholderText = placeholder or "",
+        PlaceholderColor3 = THEME.TextMuted,
+        Text = "",
+        Font = FONT.Mono,
+        TextSize = 11,
+        TextColor3 = THEME.TextPrimary,
+        BackgroundColor3 = Color3.fromRGB(6, 14, 40),
+        BackgroundTransparency = 0.3,
+        Size = UDim2.new(1, -24, 0, 26),
+        Position = UDim2.fromOffset(12, 28),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+        Parent = card,
+    })
+    AddCorner(box, UDim.new(0, 5))
+    AddPadding(box, 0, 0, 7, 7)
+    AddStroke(box, THEME.Accent, 0.70, 1)
+
+    box.Focused:Connect(function()
+        Tween(box, { BackgroundTransparency = 0.1 }, 0.15)
+    end)
+    box.FocusLost:Connect(function()
+        Tween(box, { BackgroundTransparency = 0.3 }, 0.15)
+        if callback then callback(box.Text) end
+    end)
+
+    return card, box
+end
+
+-- Toggle
+local function CreateToggle(labelText, descText, defaultVal, callback, parent)
+    local val = defaultVal or false
+
+    local card = New("Frame", {
+        Name = "Toggle_" .. labelText,
+        Size = UDim2.new(1, 0, 0, 50),
+        BackgroundColor3 = THEME.InputBg,
+        BackgroundTransparency = THEME.InputBgAlpha,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = parent or ContentArea,
+    })
+    AddCorner(card, THEME.CornerInput)
+    AddStroke(card, THEME.Accent, 0.82, 1)
+
+    New("TextLabel", {
+        Text = labelText,
+        Font = FONT.Value,
+        TextSize = 13,
+        TextColor3 = THEME.TextPrimary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -70, 0, 20),
+        Position = UDim2.fromOffset(14, 8),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    if descText then
+        New("TextLabel", {
+            Text = descText,
+            Font = FONT.Label,
+            TextSize = 10,
+            TextColor3 = THEME.TextMuted,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -70, 0, 14),
+            Position = UDim2.fromOffset(14, 28),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 5,
+            Parent = card,
+        })
+    end
+
+    -- Track (background toggle)
+    local track = New("Frame", {
+        Size = UDim2.fromOffset(40, 22),
+        Position = UDim2.new(1, -52, 0.5, -11),
+        BackgroundColor3 = val and THEME.ToggleOn or THEME.ToggleOff,
+        BackgroundTransparency = 0.1,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+        Parent = card,
+    })
+    AddCorner(track, UDim.new(1, 0))
+
+    -- Knob
+    local knob = New("Frame", {
+        Size = UDim2.fromOffset(16, 16),
+        Position = val and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BorderSizePixel = 0,
+        ZIndex = 6,
+        Parent = track,
+    })
+    AddCorner(knob, UDim.new(1, 0))
+
+    -- Clickable
+    local btn = New("TextButton", {
+        Text = "",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 7,
+        Parent = card,
+    })
+
+    btn.MouseButton1Click:Connect(function()
+        val = not val
+        Tween(track, { BackgroundColor3 = val and THEME.ToggleOn or THEME.ToggleOff }, 0.2)
+        Tween(knob, { Position = val and UDim2.fromOffset(21, 3) or UDim2.fromOffset(3, 3) }, 0.2, Enum.EasingStyle.Back)
+        if callback then callback(val) end
+    end)
+
+    return card, function() return val end
+end
+
+-- Button
+local function CreateButton(labelText, descText, callback, parent)
+    local card = New("Frame", {
+        Name = "Btn_" .. labelText,
+        Size = UDim2.new(1, 0, 0, descText and 50 or 38),
+        BackgroundColor3 = THEME.BtnBg,
+        BackgroundTransparency = THEME.BtnBgAlpha,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = parent or ContentArea,
+    })
+    AddCorner(card, THEME.CornerBtn)
+    AddStroke(card, THEME.Accent, 0.65, 1)
+
+    New("TextLabel", {
+        Text = labelText,
+        Font = FONT.Tab,
+        TextSize = 13,
+        TextColor3 = THEME.TextPrimary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -20, 0, 20),
+        Position = UDim2.fromOffset(14, descText and 8 or 9),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    if descText then
+        New("TextLabel", {
+            Text = descText,
+            Font = FONT.Label,
+            TextSize = 10,
+            TextColor3 = THEME.TextMuted,
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, -20, 0, 14),
+            Position = UDim2.fromOffset(14, 28),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            ZIndex = 5,
+            Parent = card,
+        })
+    end
+
+    -- Arrow indicator
+    New("TextLabel", {
+        Text = "›",
+        Font = FONT.Title,
+        TextSize = 18,
+        TextColor3 = THEME.TextAccent,
+        BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(20, 20),
+        Position = UDim2.new(1, -22, 0.5, -10),
+        TextXAlignment = Enum.TextXAlignment.Center,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    local btn = New("TextButton", {
+        Text = "",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 6,
+        Parent = card,
+    })
+
+    btn.MouseEnter:Connect(function()
+        Tween(card, { BackgroundTransparency = 0.35 }, 0.15)
+        Tween(card, { BackgroundColor3 = THEME.BtnHover }, 0.15)
+    end)
+    btn.MouseLeave:Connect(function()
+        Tween(card, { BackgroundTransparency = THEME.BtnBgAlpha }, 0.15)
+        Tween(card, { BackgroundColor3 = THEME.BtnBg }, 0.15)
+    end)
+    btn.MouseButton1Click:Connect(function()
+        Tween(card, { BackgroundTransparency = 0.2 }, 0.08)
+        task.delay(0.08, function()
+            Tween(card, { BackgroundTransparency = 0.35 }, 0.12)
+        end)
+        if callback then callback() end
+    end)
+
+    return card
+end
+
+-- Paragraph / Info box
+local function CreateParagraph(title, content, parent)
+    local card = New("Frame", {
+        Name = "Para_" .. title,
+        Size = UDim2.new(1, 0, 0, 10),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = THEME.InputBg,
+        BackgroundTransparency = 0.5,
+        BorderSizePixel = 0,
+        ZIndex = 4,
+        Parent = parent or ContentArea,
+    })
+    AddCorner(card, THEME.CornerInput)
+    AddStroke(card, THEME.Accent, 0.82, 1)
+    AddPadding(card, 10, 10, 14, 14)
+
+    New("TextLabel", {
+        Text = title,
+        Font = FONT.Tab,
+        TextSize = 12,
+        TextColor3 = THEME.TextAccent,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -28, 0, 16),
+        Position = UDim2.fromOffset(14, 10),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    local contentLbl = New("TextLabel", {
+        Text = content,
+        Font = FONT.Label,
+        TextSize = 11,
+        TextColor3 = THEME.TextSecondary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -28, 0, 0),
+        Position = UDim2.fromOffset(14, 30),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextWrapped = true,
+        AutomaticSize = Enum.AutomaticSize.Y,
+        RichText = true,
+        ZIndex = 5,
+        Parent = card,
+    })
+
+    return card, function(newTitle, newContent)
+        -- Update content
+        contentLbl.Text = newContent or ""
+    end
+end
+
+-- Dropdown
+local function CreateDropdown(labelText, options, multiSelect, callback, parent)
+    local selected = {}
+    local isOpen = false
+
+    local wrap = New("Frame", {
+        Name = "Dropdown_" .. labelText,
+        Size = UDim2.new(1, 0, 0, 52),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 10,
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Parent = parent or ContentArea,
+    })
+
+    local header = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 52),
+        BackgroundColor3 = THEME.InputBg,
+        BackgroundTransparency = THEME.InputBgAlpha,
+        BorderSizePixel = 0,
+        ZIndex = 11,
+        Parent = wrap,
+    })
+    AddCorner(header, THEME.CornerInput)
+    AddStroke(header, THEME.Accent, 0.78, 1)
+
+    New("TextLabel", {
+        Text = labelText,
+        Font = FONT.Value,
+        TextSize = 12,
+        TextColor3 = THEME.TextSecondary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -50, 0, 16),
+        Position = UDim2.fromOffset(14, 8),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 12,
+        Parent = header,
+    })
+
+    local selectedLbl = New("TextLabel", {
+        Text = "Semua rarity",
+        Font = FONT.Label,
+        TextSize = 11,
+        TextColor3 = THEME.TextPrimary,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -50, 0, 18),
+        Position = UDim2.fromOffset(14, 26),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+        ZIndex = 12,
+        Parent = header,
+    })
+
+    local arrow = New("TextLabel", {
+        Text = "⌄",
+        Font = FONT.Title,
+        TextSize = 14,
+        TextColor3 = THEME.TextAccent,
+        BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(24, 24),
+        Position = UDim2.new(1, -30, 0.5, -12),
+        TextXAlignment = Enum.TextXAlignment.Center,
+        ZIndex = 12,
+        Parent = header,
+    })
+
+    -- Dropdown list
+    local list = New("Frame", {
+        Name = "DropList",
+        Size = UDim2.new(1, 0, 0, 0),
+        Position = UDim2.fromOffset(0, 54),
+        BackgroundColor3 = Color3.fromRGB(8, 18, 55),
+        BackgroundTransparency = 0.05,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        ZIndex = 20,
+        Visible = false,
+        Parent = wrap,
+    })
+    AddCorner(list, THEME.CornerInput)
+    AddStroke(list, THEME.Accent, 0.65, 1)
+
+    local listLayout = New("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Parent = list,
+    })
+    AddPadding(list, 4, 4, 6, 6)
+
+    -- Build option items
+    local optionBtns = {}
+    for i, opt in ipairs(options) do
+        local optBtn = New("TextButton", {
+            Text = opt,
+            Font = FONT.Label,
+            TextSize = 12,
+            TextColor3 = THEME.TextPrimary,
+            BackgroundColor3 = Color3.fromRGB(20, 45, 120),
+            BackgroundTransparency = 1,
+            Size = UDim2.new(1, 0, 0, 28),
+            TextXAlignment = Enum.TextXAlignment.Left,
+            BorderSizePixel = 0,
+            ZIndex = 21,
+            Parent = list,
+        })
+        AddCorner(optBtn, UDim.new(0, 5))
+        AddPadding(optBtn, 0, 0, 8, 8)
+
+        optBtn.MouseEnter:Connect(function()
+            Tween(optBtn, { BackgroundTransparency = 0.6 }, 0.12)
+        end)
+        optBtn.MouseLeave:Connect(function()
+            local isSel = selected[opt]
+            Tween(optBtn, { BackgroundTransparency = isSel and 0.4 or 1 }, 0.12)
+        end)
+        optBtn.MouseButton1Click:Connect(function()
+            if multiSelect then
+                selected[opt] = not selected[opt]
             else
-                result.items[name] = (result.items[name] or 0) + 1
+                selected = {}
+                selected[opt] = true
             end
-        end
-    end
+            Tween(optBtn, { BackgroundTransparency = selected[opt] and 0.4 or 1 }, 0.15)
 
-    -- Method 1: Replion PlayerData
-    if PlayerData then
-        _pcall(function()
-            local invData = nil
-            for _, key in _ipairs({"Inventory","Backpack","Items","FishInventory","Pack"}) do
-                local ok, val = _pcall(function() return PlayerData:Get(key) end)
-                if ok and val and _type(val) == "table" then invData = val; break end
+            -- Update label
+            local selList = {}
+            for k, v in pairs(selected) do
+                if v then table.insert(selList, k) end
             end
-            if not invData then
-                _pcall(function()
-                    if PlayerData.GetData then
-                        local all = PlayerData:GetData()
-                        if all then invData = all.Inventory or all.Backpack or all.Items end
-                    end
-                end)
-            end
-            if not invData then return end
+            selectedLbl.Text = #selList == 0 and "Semua rarity" or table.concat(selList, ", ")
 
-            local function processEntry(entry)
-                if _type(entry) ~= "table" then return end
-                local name = nil
-                local id   = entry.Id or entry.ItemId or entry.FishId
-                if id and FishDB[id] then
-                    name = FishDB[id].Name
-                elseif entry.Name then
-                    name = _tostring(entry.Name)
-                end
-                classifyItem(name, id)
-            end
-
-            local itemsTable = invData.Items or invData
-            if _type(itemsTable) == "table" then
-                for _, entry in _pairs(itemsTable) do
-                    processEntry(entry)
-                end
-            end
+            if callback then callback(selList) end
         end)
+
+        optionBtns[opt] = optBtn
     end
 
-    -- Method 2: Scan backpack attribute
-    if not next(result.items) and not next(result.stones) then
-        _pcall(function()
-            local bp = LocalPlayer:FindFirstChild("Backpack")
-                or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Backpack"))
-            if bp then
-                for _, item in _ipairs(bp:GetChildren()) do
-                    classifyItem(item.Name, nil)
-                end
-            end
-        end)
-    end
+    -- Toggle open/close
+    local headerBtn = New("TextButton", {
+        Text = "",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 13,
+        Parent = header,
+    })
 
-    -- Method 3: FishDB fallback (shows possible items, count=0)
-    if not next(result.items) then
-        for _, data in _pairs(FishDB) do
-            if data.Tier and data.Tier > 0 then
-                local lname = _string.lower(data.Name)
-                if not lname:find("stone") and not lname:find("enchant") and not lname:find("evolv") then
-                    result.items[data.Name] = result.items[data.Name] or 0
-                end
-            end
+    headerBtn.MouseButton1Click:Connect(function()
+        isOpen = not isOpen
+        if isOpen then
+            local itemCount = #options
+            local targetH = math.min(itemCount * 28 + 10, 180)
+            list.Visible = true
+            list.Size = UDim2.new(1, 0, 0, 0)
+            Tween(list, { Size = UDim2.new(1, 0, 0, targetH) }, 0.2, Enum.EasingStyle.Back)
+            Tween(arrow, { Rotation = 180 }, 0.2)
+            wrap.Size = UDim2.new(1, 0, 0, 52 + targetH + 6)
+        else
+            Tween(list, { Size = UDim2.new(1, 0, 0, 0) }, 0.15)
+            Tween(arrow, { Rotation = 0 }, 0.15)
+            task.delay(0.15, function() list.Visible = false end)
+            wrap.Size = UDim2.new(1, 0, 0, 52)
         end
-    end
-
-    local fc, sc = 0, 0
-    for _ in _pairs(result.items)  do fc = fc + 1 end
-    for _ in _pairs(result.stones) do sc = sc + 1 end
-    warn("[Vechnost] Inventory: "..fc.." fish, "..sc.." stones")
-    return result
-end
-
--- =====================================================
--- BAGIAN 11: ICON CACHE
--- =====================================================
-local IconCache  = {}
-local IconWaiter = {}
-
-local function FetchFishIconAsync(fishId, callback)
-    if IconCache[fishId] then callback(IconCache[fishId]); return end
-    if IconWaiter[fishId] then _table.insert(IconWaiter[fishId], callback); return end
-    IconWaiter[fishId] = {callback}
-    _task.spawn(function()
-        local fish = FishDB[fishId]
-        if not fish or not fish.Icon then callback(""); return end
-        local assetId = _tostring(fish.Icon):match("%d+")
-        if not assetId then callback(""); return end
-        local api = ("https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png"):format(assetId)
-        local ok, res = _pcall(function() return HttpRequest({Url=api, Method="GET"}) end)
-        if not ok or not res or not res.Body then callback(""); return end
-        local ok2, data = _pcall(HttpService.JSONDecode, HttpService, res.Body)
-        local url = ok2 and data and data.data and data.data[1] and data.data[1].imageUrl or ""
-        IconCache[fishId] = url
-        for _, cb in _ipairs(IconWaiter[fishId]) do cb(url) end
-        IconWaiter[fishId] = nil
     end)
+
+    return wrap
 end
 
 -- =====================================================
--- BAGIAN 12: WEBHOOK ENGINE
+-- TAB SYSTEM
 -- =====================================================
-local Settings = {
-    Active=false, Url="", SentUUID={},
-    SelectedRarities={}, ServerWide=true, LogCount=0,
-}
+local tabs = {}
+local activeTab = nil
+local tabPages = {}
 
-local function BuildPayload(playerName, fishId, weight, mutation)
-    local fish = FishDB[fishId]; if not fish then return nil end
-    local tier       = fish.Tier
-    local rarityName = RARITY_MAP[tier] or "Unknown"
-    local mutText    = mutation and _tostring(mutation) or "None"
-    local weightText = _string.format("%.1fkg", weight or 0)
-    local iconUrl    = IconCache[fishId] or ""
-    return {
-        username="Vechnost Notifier",
-        avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags=32768,
-        components={{type=17, components={
-            {type=10, content="# NEW FISH CAUGHT!"},
-            {type=14, spacing=1, divider=true},
-            {type=10, content="__@"..(playerName or "?").." you got new ".._string.upper(rarityName).." fish__"},
-            {type=9,
-                components={{type=10,content="**Fish Name**"},{type=10,content="> "..(fish.Name or "?")}},
-                accessory = iconUrl~="" and {type=11,media={url=iconUrl}} or nil
-            },
-            {type=10,content="**Tier**"}, {type=10,content="> ".._string.upper(rarityName)},
-            {type=10,content="**Weight**"}, {type=10,content="> "..weightText},
-            {type=10,content="**Mutation**"}, {type=10,content="> "..mutText},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="> discord.gg/vechnost"},
-            {type=10,content="-# "..os.date("!%B %d, %Y")},
-        }}}
+local function CreateTab(name, iconText)
+    -- Tab button di sidebar
+    local tabBtn = New("Frame", {
+        Name = "Tab_" .. name,
+        Size = UDim2.new(1, 0, 0, SIZE.TabHeight),
+        BackgroundColor3 = THEME.TabNormal,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 5,
+        Parent = TabContainer,
+    })
+    AddCorner(tabBtn, THEME.CornerTab)
+
+    -- Active indicator bar (kiri)
+    local indicator = New("Frame", {
+        Size = UDim2.fromOffset(3, 24),
+        Position = UDim2.new(0, -8, 0.5, -12),
+        BackgroundColor3 = THEME.Accent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ZIndex = 6,
+        Parent = tabBtn,
+    })
+    AddCorner(indicator, UDim.new(1, 0))
+
+    -- Icon
+    local iconLbl = New("TextLabel", {
+        Text = iconText or "◆",
+        Font = FONT.Title,
+        TextSize = 16,
+        TextColor3 = THEME.TextMuted,
+        BackgroundTransparency = 1,
+        Size = UDim2.fromOffset(24, 24),
+        Position = UDim2.fromOffset(10, 10),
+        TextXAlignment = Enum.TextXAlignment.Center,
+        ZIndex = 6,
+        Parent = tabBtn,
+    })
+
+    -- Label
+    local nameLbl = New("TextLabel", {
+        Text = name,
+        Font = FONT.Tab,
+        TextSize = 12,
+        TextColor3 = THEME.TextMuted,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, -44, 1, 0),
+        Position = UDim2.fromOffset(38, 0),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 6,
+        Parent = tabBtn,
+    })
+
+    -- Page di panel kanan
+    local page = New("Frame", {
+        Name = "Page_" .. name,
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 3,
+        Parent = ContentArea,
+    })
+
+    -- Scroll list di page
+    local pageScroll = New("ScrollingFrame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = THEME.Accent,
+        ScrollBarImageTransparency = 0.5,
+        CanvasSize = UDim2.fromScale(0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 4,
+        Parent = page,
+    })
+    New("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding = UDim.new(0, 8),
+        Parent = pageScroll,
+    })
+    AddPadding(pageScroll, 2, 10, 0, 4)
+
+    local tabData = {
+        name = name,
+        btn = tabBtn,
+        indicator = indicator,
+        iconLbl = iconLbl,
+        nameLbl = nameLbl,
+        page = page,
+        scroll = pageScroll,
     }
-end
 
-local function BuildActivationPayload(playerName, mode)
-    return {
-        username="Vechnost Notifier",
-        avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags=32768,
-        components={{type=17,accent_color=0x30ff6a,components={
-            {type=10,content="**"..playerName.." Webhook Activated!**"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="### Vechnost v3.0"},
-            {type=10,content="- **Account:** "..playerName.."\n- **Mode:** "..mode.."\n- **Status:** Online"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="-# "..os.date("!%B %d, %Y")},
-        }}}
-    }
-end
+    -- Click handler
+    local clickBtn = New("TextButton", {
+        Text = "",
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        ZIndex = 7,
+        Parent = tabBtn,
+    })
 
-local function BuildTestPayload(playerName)
-    return {
-        username="Vechnost Notifier",
-        avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags=32768,
-        components={{type=17,accent_color=0x5865f2,components={
-            {type=10,content="**Test Message**"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="Webhook OK!\n- **Dari:** "..playerName},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="-# "..os.date("!%B %d, %Y")},
-        }}}
-    }
-end
-
-local function SendWebhook(payload)
-    if Settings.Url=="" or not HttpRequest or not payload then return end
-    _pcall(function()
-        local url = Settings.Url..(Settings.Url:find("?") and "&" or "?").."with_components=true"
-        HttpRequest({Url=url, Method="POST",
-            Headers={["Content-Type"]="application/json"},
-            Body=HttpService:JSONEncode(payload)})
+    clickBtn.MouseEnter:Connect(function()
+        if activeTab ~= tabData then
+            Tween(tabBtn, { BackgroundTransparency = 0.70 }, 0.15)
+            Tween(tabBtn, { BackgroundColor3 = THEME.TabHover }, 0.15)
+        end
     end)
-end
-
--- =====================================================
--- BAGIAN 13: FISH DETECTION (Server-Wide Logger)
--- =====================================================
-local Connections   = {}
-local ChatSentDedup = {}
-
-local function ParseChatForFish(messageText)
-    if not Settings.Active or not Settings.ServerWide then return end
-    local playerName, fishName, weightStr =
-        messageText:match("(%S+)%s+obtained%s+a%s+(.-)%s*%(([%d%.]+)kg%)")
-    if not playerName then
-        playerName,fishName,weightStr = messageText:match("(%S+)%s+obtained%s+(.-)%s*%(([%d%.]+)kg%)")
-    end
-    if not playerName or not fishName then return end
-    fishName = fishName:gsub("%s+$","")
-    if playerName==LocalPlayer.Name or playerName==LocalPlayer.DisplayName then return end
-    local fishId = FishNameToId[fishName] or FishNameToId[_string.lower(fishName)]
-    if not fishId then return end
-    if not IsRarityAllowed(fishId, Settings.SelectedRarities) then return end
-    local key = playerName..fishName.._tostring(_math.floor(os.time()/2))
-    if ChatSentDedup[key] then return end
-    ChatSentDedup[key] = true
-    _task.delay(10, function() ChatSentDedup[key]=nil end)
-    local weight = tonumber(weightStr) or 0
-    Settings.LogCount = Settings.LogCount + 1
-    FetchFishIconAsync(fishId, function() SendWebhook(BuildPayload(playerName,fishId,weight,nil)) end)
-end
-
-local function HandleFishCaught(playerArg, weightData, wrapper)
-    if not Settings.Active then return end
-    local item = nil
-    if wrapper and _type(wrapper)=="table" and wrapper.InventoryItem then item=wrapper.InventoryItem end
-    if not item and weightData and _type(weightData)=="table" and weightData.InventoryItem then item=weightData.InventoryItem end
-    if not item or not item.Id or not item.UUID then return end
-    if not FishDB[item.Id] then return end
-    if not IsRarityAllowed(item.Id, Settings.SelectedRarities) then return end
-    if Settings.SentUUID[item.UUID] then return end
-    Settings.SentUUID[item.UUID] = true
-    local playerName = ResolvePlayerName(playerArg)
-    if not Settings.ServerWide and playerName~=LocalPlayer.Name then return end
-    local weight   = (weightData and _type(weightData)=="table" and weightData.Weight) or 0
-    local mutation = ExtractMutation(weightData, item)
-    Settings.LogCount = Settings.LogCount + 1
-    FetchFishIconAsync(item.Id, function() SendWebhook(BuildPayload(playerName,item.Id,weight,mutation)) end)
-end
-
-local function StartLogger()
-    if Settings.Active then return end
-    if not net or not ObtainedNewFish then
-        Rayfield:Notify({Title="Vechnost", Content="ERROR: Game remotes not found!", Duration=5}); return
-    end
-    Settings.Active=true; Settings.SentUUID={}; Settings.LogCount=0
-    if Settings.ServerWide then
-        _pcall(function()
-            Connections[#Connections+1] = TextChatService.MessageReceived:Connect(function(msg)
-                _pcall(function()
-                    if msg.Text and msg.Text:find("obtained") then ParseChatForFish(msg.Text) end
-                end)
-            end)
-        end)
-    end
-    _pcall(function()
-        Connections[#Connections+1] = ObtainedNewFish.OnClientEvent:Connect(function(p,w,r)
-            HandleFishCaught(p,w,r)
-        end)
+    clickBtn.MouseLeave:Connect(function()
+        if activeTab ~= tabData then
+            Tween(tabBtn, { BackgroundTransparency = 1 }, 0.15)
+        end
     end)
-    if Settings.ServerWide then
-        _pcall(function()
-            Connections[#Connections+1] = PlayerGui.DescendantAdded:Connect(function(desc)
-                if not Settings.Active then return end
-                if desc:IsA("TextLabel") then
-                    _task.defer(function()
-                        _pcall(function()
-                            local text = desc.Text or ""
-                            for fishId, fishData in _pairs(FishDB) do
-                                if fishData.Name and text:find(fishData.Name, 1, true) then
-                                    if not IsRarityAllowed(fishId, Settings.SelectedRarities) then return end
-                                    local pName = "Unknown"
-                                    for _, p in _pairs(Players:GetPlayers()) do
-                                        if p~=LocalPlayer and (text:find(p.Name,1,true) or text:find(p.DisplayName,1,true)) then
-                                            pName=p.Name; break
-                                        end
-                                    end
-                                    if pName=="Unknown" then return end
-                                    local key = "GUI_"..text..os.time()
-                                    if Settings.SentUUID[key] then return end
-                                    Settings.SentUUID[key]=true
-                                    Settings.LogCount=Settings.LogCount+1
-                                    FetchFishIconAsync(fishId, function() SendWebhook(BuildPayload(pName,fishId,0,nil)) end)
-                                    return
-                                end
-                            end
-                        end)
-                    end)
-                end
-            end)
-        end)
-    end
-    _task.spawn(function()
-        SendWebhook(BuildActivationPayload(LocalPlayer.Name, Settings.ServerWide and "Server Notifier" or "Local Only"))
+
+    clickBtn.MouseButton1Click:Connect(function()
+        if activeTab == tabData then return end
+
+        -- Deaktifkan tab lama
+        if activeTab then
+            activeTab.page.Visible = false
+            Tween(activeTab.btn, { BackgroundTransparency = 1 }, 0.15)
+            Tween(activeTab.indicator, { BackgroundTransparency = 1 }, 0.15)
+            Tween(activeTab.iconLbl, { TextColor3 = THEME.TextMuted }, 0.15)
+            Tween(activeTab.nameLbl, { TextColor3 = THEME.TextMuted }, 0.15)
+        end
+
+        -- Aktifkan tab baru
+        activeTab = tabData
+        page.Visible = true
+        Tween(tabBtn, { BackgroundColor3 = THEME.TabActive, BackgroundTransparency = THEME.TabActiveAlpha }, 0.18)
+        Tween(indicator, { BackgroundTransparency = 0 }, 0.18)
+        Tween(iconLbl, { TextColor3 = Color3.fromRGB(255, 255, 255) }, 0.18)
+        Tween(nameLbl, { TextColor3 = Color3.fromRGB(255, 255, 255) }, 0.18)
+        PanelTitle.Text = name
     end)
-    warn("[Vechnost] Logger ENABLED")
-end
 
-local function StopLogger()
-    Settings.Active=false
-    for _,conn in _ipairs(Connections) do _pcall(function() conn:Disconnect() end) end
-    Connections={}
-    warn("[Vechnost] Logger DISABLED | Total:", Settings.LogCount)
+    table.insert(tabs, tabData)
+    tabPages[name] = tabData
+    return pageScroll  -- kembalikan scroll container untuk di-populate
 end
 
 -- =====================================================
--- BAGIAN 14: TRADING ENGINE
+-- BUAT TAB
 -- =====================================================
--- RF/CanSendTrade = RemoteFunction yang dikonfirmasi dari console
--- BAC bypass: SafeFire + random delay antar trade
+local WebhookPage  = CreateTab("Webhook Logger", "🔗")
+local SettingsPage = CreateTab("Settings",        "⚙")
 
-local TradeState = {
-    TargetPlayer = nil,
-    ByName   = {Active=false, ItemName=nil,  Amount=1, Sent=0},
-    ByCoin   = {Active=false, TargetCoins=0, Sent=0},
-    ByRarity = {Active=false, Rarity=nil, RarityTier=1, Amount=1, Sent=0},
-    ByStone  = {Active=false, StoneName=nil, Amount=1, Sent=0},
-}
-
-local InvCache = {items={}, stones={}}
-
-local function RefreshInvCache()
-    InvCache = ScanInventory()
-end
-
-local function GetItemNames()
-    local names = {}
-    for name in _pairs(InvCache.items) do _table.insert(names, name) end
-    _table.sort(names)
-    return #names > 0 and names or {"(Refresh dulu)"}
-end
-
-local function GetItemsByTier(tier)
-    local names = {}
-    for name, count in _pairs(InvCache.items) do
-        if count > 0 then
-            local id = FishNameToId[name] or FishNameToId[_string.lower(name)]
-            if id and FishDB[id] and FishDB[id].Tier == tier then
-                for _ = 1, count do _table.insert(names, name) end
-            end
-        end
-    end
-    if #names == 0 then
-        for _, data in _pairs(FishDB) do
-            if data.Tier == tier then _table.insert(names, data.Name) end
-        end
-    end
-    return names
-end
-
--- Core trade function - menggunakan RF/CanSendTrade
-local function DoSendTrade(targetUsername, itemNameOrId, quantity)
-    quantity = quantity or 1
-    local targetPlayer = nil
-    for _, p in _pairs(Players:GetPlayers()) do
-        if p.Name==targetUsername or p.DisplayName==targetUsername then
-            targetPlayer=p; break
-        end
-    end
-    if not targetPlayer then
-        warn("[Vechnost] Trade: player tidak ditemukan:", targetUsername)
-        return false
-    end
-
-    local fishId = FishNameToId[itemNameOrId]
-                or FishNameToId[_string.lower(_tostring(itemNameOrId))]
-                or itemNameOrId
-
-    -- Primary: RF/CanSendTrade
-    if CanSendTradeRemote then
-        SafeFire(CanSendTradeRemote, targetPlayer, fishId, quantity)
-        return true
-    end
-
-    -- Fallback scan
-    if net then
-        _pcall(function()
-            for _, child in _ipairs(net:GetDescendants()) do
-                if child:IsA("RemoteFunction") or child:IsA("RemoteEvent") then
-                    local ln = _string.lower(child.Name)
-                    if ln:find("trade") or ln:find("send") or ln:find("give") then
-                        SafeFire(child, targetPlayer, fishId, quantity)
-                        break
-                    end
-                end
-            end
-        end)
-    end
-    return true
+-- Aktifkan tab pertama
+do
+    local first = tabs[1]
+    first.page.Visible = true
+    activeTab = first
+    first.btn.BackgroundColor3 = THEME.TabActive
+    first.btn.BackgroundTransparency = THEME.TabActiveAlpha
+    first.indicator.BackgroundTransparency = 0
+    first.iconLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    first.nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PanelTitle.Text = first.name
 end
 
 -- =====================================================
--- BAGIAN 15: RAYFIELD WINDOW
+-- ISI TAB: WEBHOOK LOGGER
 -- =====================================================
-local Window = Rayfield:CreateWindow({
-    Name                 = "Vechnost",
-    Icon                 = "fish",
-    LoadingTitle         = "Vechnost v3.0",
-    LoadingSubtitle      = "Webhook + Trading System",
-    Theme                = "Default",
-    ToggleUIKeybind      = "V",
-    DisableRayfieldPrompts = true,
-    DisableBuildWarnings   = true,
-    ConfigurationSaving  = {Enabled=true, FolderName="Vechnost", FileName="VechnostConfig_v3"},
-    KeySystem            = true,
-    KeySettings          = {
-        Title    = "Vechnost Access",
-        Subtitle = "Authentication Required",
-        Note     = "Join discord: discord.gg/vechnost",
-        FileName = "VechnostKey",
-        SaveKey  = true,
-        GrabKeyFromSite = false,
-        Key      = {"Vechnost-Notifier-9999"},
-    },
-})
+CreateSection("Rarity Filter", WebhookPage)
+CreateDropdown("Filter by Rarity", {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}, true, function(opts)
+    -- TODO: callback
+end, WebhookPage)
 
--- =====================================================
--- BAGIAN 16: FLOATING TOGGLE BUTTON
--- =====================================================
-local oldBtn = CoreGui:FindFirstChild(GUI_NAMES.Mobile)
-if oldBtn then oldBtn:Destroy() end
-local BtnGui = Instance.new("ScreenGui")
-BtnGui.Name=GUI_NAMES.Mobile; BtnGui.ResetOnSpawn=false; BtnGui.Parent=CoreGui
+CreateSection("Setup Webhook", WebhookPage)
+local _, urlBox = CreateInput("Discord Webhook URL", "https://discord.com/api/webhooks/...", function(text)
+    -- TODO: simpan URL
+end, WebhookPage)
 
-local Button = Instance.new("ImageButton")
-Button.Size=UDim2.fromOffset(52,52); Button.Position=UDim2.fromScale(0.05,0.5)
-Button.BackgroundTransparency=1; Button.AutoButtonColor=false; Button.BorderSizePixel=0
-Button.Image="rbxassetid://127239715511367"; Button.ScaleType=Enum.ScaleType.Fit
-Button.Parent=BtnGui
-Instance.new("UICorner",Button).CornerRadius=UDim.new(1,0)
+CreateButton("Save Webhook URL", "Simpan dan validasi URL webhook", function()
+    -- TODO
+end, WebhookPage)
 
-local windowVisible=true
-Button.MouseButton1Click:Connect(function()
-    windowVisible=not windowVisible
-    _pcall(function() Rayfield:SetVisibility(windowVisible) end)
-end)
-local dragging,dragOffset=false,Vector2.zero
-Button.InputBegan:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1
-    or input.UserInputType==Enum.UserInputType.Touch then
-        dragging=true; dragOffset=UserInputService:GetMouseLocation()-Button.AbsolutePosition
-        input.Changed:Connect(function()
-            if input.UserInputState==Enum.UserInputState.End then dragging=false end
-        end)
-    end
-end)
-RunService.RenderStepped:Connect(function()
-    if not dragging then return end
-    local mouse=UserInputService:GetMouseLocation()
-    local target=mouse-dragOffset
-    local vp=_workspace.CurrentCamera and _workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
-    local sz=Button.AbsoluteSize
-    Button.Position=UDim2.fromOffset(
-        _math.clamp(target.X,0,vp.X-sz.X),
-        _math.clamp(target.Y,0,vp.Y-sz.Y))
-end)
+CreateSection("Logger Mode", WebhookPage)
+CreateToggle("Server-Notifier Mode", "Log ikan dari semua player di server", true, function(val)
+    -- TODO
+end, WebhookPage)
+
+CreateSection("Control", WebhookPage)
+CreateToggle("Enable Webhook Logger", "Aktifkan pengiriman notifikasi ke Discord", false, function(val)
+    -- TODO
+end, WebhookPage)
+
+CreateSection("Status", WebhookPage)
+local _, updateStatus = CreateParagraph("Notifier Status", "Status: Offline", WebhookPage)
 
 -- =====================================================
--- BAGIAN 17: TABS (urutan sidebar: Webhook | Trading | Settings)
+-- ISI TAB: SETTINGS
 -- =====================================================
-local TabWebhook  = Window:CreateTab("Webhook Logger",  "webhook")
-local TabTrading  = Window:CreateTab("Trading",         "arrow-right-left")
-local TabSettings = Window:CreateTab("Settings",        "settings")
+CreateSection("Tentang", SettingsPage)
+CreateParagraph("Vechnost Webhook Notifier",
+    "Beta Version • Server-Notifier Fish Catch Logger\nLog ikan dari semua player di server\n\n<font color='#5aa0ff'>by Vechnost</font>",
+    SettingsPage)
 
--- ===========================================================
--- TAB 1 - WEBHOOK LOGGER
--- ===========================================================
-TabWebhook:CreateSection("Rarity Filter")
-TabWebhook:CreateDropdown({
-    Name="Filter by Rarity", Options=RarityList, CurrentOption={},
-    MultipleOptions=true, Flag="RarityFilter",
-    Callback=function(Options)
-        Settings.SelectedRarities={}
-        for _,v in _ipairs(Options or {}) do
-            local tier=RARITY_NAME_TO_TIER[v]
-            if tier then Settings.SelectedRarities[tier]=true end
-        end
-        Rayfield:Notify({Title="Vechnost",Content="Filter rarity diperbarui",Duration=2})
-    end
-})
+CreateSection("Testing", SettingsPage)
+CreateButton("Test Webhook", "Kirim pesan test ke Discord channel", function()
+    -- TODO
+end, SettingsPage)
 
-TabWebhook:CreateSection("Setup Webhook")
-local WebhookUrlBuffer=""
-TabWebhook:CreateInput({
-    Name="Discord Webhook URL", CurrentValue="",
-    PlaceholderText="https://discord.com/api/webhooks/...",
-    RemoveTextAfterFocusLost=false, Flag="WebhookUrl",
-    Callback=function(Text) WebhookUrlBuffer=_tostring(Text) end
-})
-TabWebhook:CreateButton({
-    Name="Save Webhook URL",
-    Callback=function()
-        local url=WebhookUrlBuffer:gsub("%s+","")
-        if not url:match("^https://discord.com/api/webhooks/") and
-           not url:match("^https://canary.discord.com/api/webhooks/") then
-            Rayfield:Notify({Title="Vechnost",Content="URL tidak valid!",Duration=3}); return
-        end
-        Settings.Url=url
-        Rayfield:Notify({Title="Vechnost",Content="Webhook URL saved!",Duration=2})
-    end
-})
+CreateButton("Reset Log Counter", "Reset counter dan hapus UUID cache", function()
+    -- TODO
+end, SettingsPage)
 
-TabWebhook:CreateSection("Logger Mode")
-TabWebhook:CreateToggle({
-    Name="Server-Notifier Mode", CurrentValue=true, Flag="ServerNotifierMode",
-    Callback=function(Value)
-        Settings.ServerWide=Value
-        Rayfield:Notify({Title="Vechnost",Content=Value and "Mode: Server Wide" or "Mode: Local Only",Duration=2})
-    end
-})
+-- =====================================================
+-- OPEN ANIMATION
+-- =====================================================
+Window.Size = UDim2.fromOffset(0, 0)
+Tween(Window, { Size = SIZE.Window }, 0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
-TabWebhook:CreateSection("Control")
-TabWebhook:CreateToggle({
-    Name="Enable Webhook Logger", CurrentValue=false, Flag="LoggerEnabled",
-    Callback=function(Value)
-        if Value then
-            if Settings.Url=="" then
-                Rayfield:Notify({Title="Vechnost",Content="Isi webhook URL dulu!",Duration=3}); return
-            end
-            StartLogger()
-            Rayfield:Notify({Title="Vechnost",Content="Notifier Aktif!",Duration=2})
-        else
-            StopLogger()
-            Rayfield:Notify({Title="Vechnost",Content="Notifier Berhenti",Duration=2})
-        end
-    end
-})
-
-local StatusLabelWebhook = TabWebhook:CreateParagraph({Title="Notifier Status",Content="Status: Offline"})
-_task.spawn(function()
-    while true do
-        _task.wait(2)
-        _pcall(function()
-            if Settings.Active then
-                StatusLabelWebhook:Set({Title="Notifier Status",Content=_string.format(
-                    "Status: Aktif\nMode: %s\nTotal Log: %d ikan",
-                    Settings.ServerWide and "Server-Notifier" or "Local Only", Settings.LogCount)})
-            else
-                StatusLabelWebhook:Set({Title="Notifier Status",Content="Status: Offline"})
-            end
-        end)
-    end
-end)
-
--- ===========================================================
--- TAB 2 - TRADING
--- ===========================================================
-
--- ---- SELECT PLAYER ----
-TabTrading:CreateSection("Select Player")
-
-local PlayerDropdown = TabTrading:CreateDropdown({
-    Name="Select Player", Options={"(Loading...)"}, CurrentOption={"(Loading...)"},
-    MultipleOptions=false, Flag="TradingTargetPlayer",
-    Callback=function(Option)
-        local sel=_type(Option)=="table" and Option[1] or Option
-        if sel and sel~="(Loading...)" and sel~="(Tidak ada player)" then
-            TradeState.TargetPlayer=sel
-            Rayfield:Notify({Title="Vechnost",Content="Target: "..sel,Duration=2})
-        end
-    end
-})
-
-local function RefreshPlayerList()
-    local list={}
-    for _,p in _pairs(Players:GetPlayers()) do
-        if p~=LocalPlayer then _table.insert(list,p.Name) end
-    end
-    if #list==0 then list={"(Tidak ada player)"} end
-    _pcall(function() PlayerDropdown:Refresh(list,true) end)
-    Rayfield:Notify({Title="Vechnost",Content=#list.." player ditemukan",Duration=2})
-end
-
-TabTrading:CreateButton({Name="Refresh Player List", Callback=function() RefreshPlayerList() end})
-_task.spawn(function() _task.wait(3); RefreshPlayerList() end)
-
--- ---- TRADE BY NAME ----
-TabTrading:CreateSection("Trade by Name")
-
-local TradeNameStatus = TabTrading:CreateParagraph({Title="Status Trade by Name",Content="Menunggu..."})
-
-local ItemDropdown = TabTrading:CreateDropdown({
-    Name="Select Item", Options={"(Refresh dulu)"}, CurrentOption={"(Refresh dulu)"},
-    MultipleOptions=false, Flag="TradeByNameItem",
-    Callback=function(Option)
-        local sel=_type(Option)=="table" and Option[1] or Option
-        if sel and sel~="(Refresh dulu)" and sel~="(Inventory kosong)" then
-            TradeState.ByName.ItemName=sel
-        end
-    end
-})
-
-TabTrading:CreateButton({
-    Name="Refresh Items",
-    Callback=function()
-        _task.spawn(function()
-            RefreshInvCache()
-            local names=GetItemNames()
-            _pcall(function() ItemDropdown:Refresh(names,true) end)
-            Rayfield:Notify({Title="Vechnost",Content=_string.format("Items loaded: %d item",#names),Duration=2})
-        end)
-    end
-})
-
-TabTrading:CreateInput({
-    Name="Amount", CurrentValue="1", PlaceholderText="Jumlah item yang mau dikirim",
-    RemoveTextAfterFocusLost=false, Flag="TradeByNameAmount",
-    Callback=function(Text)
-        local n=tonumber(Text)
-        if n and n>0 then TradeState.ByName.Amount=_math.floor(n) end
-    end
-})
-
-TabTrading:CreateToggle({
-    Name="Start Trade by Name", CurrentValue=false, Flag="StartTradeByName",
-    Callback=function(Value)
-        if Value then
-            if not TradeState.TargetPlayer then
-                Rayfield:Notify({Title="Vechnost",Content="Pilih target player dulu!",Duration=3}); return end
-            if not TradeState.ByName.ItemName then
-                Rayfield:Notify({Title="Vechnost",Content="Pilih item dulu!",Duration=3}); return end
-            TradeState.ByName.Active=true; TradeState.ByName.Sent=0
-            local total=TradeState.ByName.Amount
-            local itemName=TradeState.ByName.ItemName
-            local target=TradeState.TargetPlayer
-            warn("[Vechnost] Trade by Name:", itemName, "x"..total, "->", target)
-            _task.spawn(function()
-                for i=1,total do
-                    if not TradeState.ByName.Active then break end
-                    _pcall(function()
-                        TradeNameStatus:Set({Title="Status Trade by Name",
-                            Content=_string.format("Sending: %d/%d %s\nProgress: %d/%d",i,total,itemName,i,total)})
-                    end)
-                    DoSendTrade(target, itemName, 1)
-                    TradeState.ByName.Sent=i
-                    _task.wait(RandDelay(0.8, 0.2))
-                end
-                TradeState.ByName.Active=false
-                _pcall(function()
-                    TradeNameStatus:Set({Title="Status Trade by Name",
-                        Content=_string.format("Selesai: %d/%d %s", TradeState.ByName.Sent,total,itemName)})
-                end)
-                Rayfield:Notify({Title="Vechnost",Content="Trade by Name selesai! "..TradeState.ByName.Sent.."/"..total,Duration=4})
-            end)
-        else
-            TradeState.ByName.Active=false
-            Rayfield:Notify({Title="Vechnost",Content="Trade by Name dihentikan.",Duration=2})
-        end
-    end
-})
-
--- ---- TRADE COIN ----
-TabTrading:CreateSection("Trade Coin")
-
-local TradeCoinStatus = TabTrading:CreateParagraph({Title="Status Trade Coin",Content="Menunggu..."})
-
-TabTrading:CreateInput({
-    Name="Target Coins", CurrentValue="0", PlaceholderText="Jumlah coin yang mau dikirim",
-    RemoveTextAfterFocusLost=false, Flag="TradeCoinTarget",
-    Callback=function(Text)
-        local n=tonumber(Text)
-        if n and n>=0 then TradeState.ByCoin.TargetCoins=_math.floor(n) end
-    end
-})
-
-TabTrading:CreateToggle({
-    Name="Start Trade Coin", CurrentValue=false, Flag="StartTradeCoin",
-    Callback=function(Value)
-        if Value then
-            if not TradeState.TargetPlayer then
-                Rayfield:Notify({Title="Vechnost",Content="Pilih target player dulu!",Duration=3}); return end
-            if TradeState.ByCoin.TargetCoins<=0 then
-                Rayfield:Notify({Title="Vechnost",Content="Isi jumlah coin!",Duration=3}); return end
-            TradeState.ByCoin.Active=true
-            local targetCoins=TradeState.ByCoin.TargetCoins
-            local target=TradeState.TargetPlayer
-            _task.spawn(function()
-                _pcall(function()
-                    TradeCoinStatus:Set({Title="Status Trade Coin",
-                        Content="Sending: "..FormatNumber(targetCoins).." coins ke "..target})
-                end)
-                local coinRemote=nil
-                if net then
-                    for _,child in _ipairs(net:GetDescendants()) do
-                        if child:IsA("RemoteFunction") or child:IsA("RemoteEvent") then
-                            local ln=_string.lower(child.Name)
-                            if ln:find("coin") or ln:find("currency") or ln:find("cash") then
-                                coinRemote=child; break
-                            end
-                        end
-                    end
-                end
-                local remote=coinRemote or CanSendTradeRemote
-                local targetPlayer=nil
-                for _,p in _pairs(Players:GetPlayers()) do
-                    if p.Name==target or p.DisplayName==target then targetPlayer=p; break end
-                end
-                local ok=false
-                if remote and targetPlayer then
-                    ok=_pcall(function() SafeFire(remote, targetPlayer, "Coins", targetCoins) end)
-                end
-                TradeState.ByCoin.Active=false
-                local statusTxt=ok and "Terkirim: "..FormatNumber(targetCoins).." coins" or "Remote coin tidak ditemukan"
-                _pcall(function() TradeCoinStatus:Set({Title="Status Trade Coin",Content=statusTxt}) end)
-                Rayfield:Notify({Title="Vechnost",Content=statusTxt,Duration=4})
-            end)
-        else
-            TradeState.ByCoin.Active=false
-            Rayfield:Notify({Title="Vechnost",Content="Trade Coin dihentikan.",Duration=2})
-        end
-    end
-})
-
--- ---- TRADE RARITY ----
-TabTrading:CreateSection("Trade Rarity")
-
-local TradeRarityStatus = TabTrading:CreateParagraph({Title="Status Trade Rarity",Content="Menunggu..."})
-
-TabTrading:CreateDropdown({
-    Name="Select Rarity", Options=RarityList, CurrentOption={RarityList[1]},
-    MultipleOptions=false, Flag="TradeRaritySelect",
-    Callback=function(Option)
-        local sel=_type(Option)=="table" and Option[1] or Option
-        if sel then
-            TradeState.ByRarity.Rarity=sel
-            TradeState.ByRarity.RarityTier=RARITY_NAME_TO_TIER[sel] or 1
-        end
-    end
-})
-TradeState.ByRarity.Rarity="Common"; TradeState.ByRarity.RarityTier=1
-
-TabTrading:CreateInput({
-    Name="Amount", CurrentValue="1", PlaceholderText="Jumlah ikan yang mau dikirim",
-    RemoveTextAfterFocusLost=false, Flag="TradeRarityAmount",
-    Callback=function(Text)
-        local n=tonumber(Text)
-        if n and n>0 then TradeState.ByRarity.Amount=_math.floor(n) end
-    end
-})
-
-TabTrading:CreateToggle({
-    Name="Start Trade Rarity", CurrentValue=false, Flag="StartTradeRarity",
-    Callback=function(Value)
-        if Value then
-            if not TradeState.TargetPlayer then
-                Rayfield:Notify({Title="Vechnost",Content="Pilih target player dulu!",Duration=3}); return end
-            TradeState.ByRarity.Active=true; TradeState.ByRarity.Sent=0
-            local target=TradeState.TargetPlayer
-            local rarityName=TradeState.ByRarity.Rarity or "Common"
-            local tier=TradeState.ByRarity.RarityTier or 1
-            local total=TradeState.ByRarity.Amount
-            warn("[Vechnost] Trade Rarity:", rarityName, "x"..total, "->", target)
-            _task.spawn(function()
-                local fishList=GetItemsByTier(tier)
-                if #fishList==0 then
-                    TradeState.ByRarity.Active=false
-                    Rayfield:Notify({Title="Vechnost",Content="Tidak ada ikan "..rarityName.." di inventory!",Duration=3})
-                    return
-                end
-                local actualTotal=total
-                for i=1,actualTotal do
-                    if not TradeState.ByRarity.Active then break end
-                    local itemName=fishList[((i-1) % #fishList)+1]
-                    _pcall(function()
-                        TradeRarityStatus:Set({Title="Status Trade Rarity",
-                            Content=_string.format("Sending: %d/%d %s\nProgress: %d/%d",i,actualTotal,rarityName,i,actualTotal)})
-                    end)
-                    DoSendTrade(target, itemName, 1)
-                    TradeState.ByRarity.Sent=i
-                    _task.wait(RandDelay(0.8,0.2))
-                end
-                TradeState.ByRarity.Active=false
-                _pcall(function()
-                    TradeRarityStatus:Set({Title="Status Trade Rarity",
-                        Content=_string.format("Selesai: %d/%d ikan %s",TradeState.ByRarity.Sent,actualTotal,rarityName)})
-                end)
-                Rayfield:Notify({Title="Vechnost",Content="Trade Rarity selesai! "..TradeState.ByRarity.Sent.." "..rarityName,Duration=4})
-            end)
-        else
-            TradeState.ByRarity.Active=false
-            Rayfield:Notify({Title="Vechnost",Content="Trade Rarity dihentikan.",Duration=2})
-        end
-    end
-})
-
--- ---- TRADE STONE ----
-TabTrading:CreateSection("Trade Stone")
-
-local TradeStoneStatus = TabTrading:CreateParagraph({Title="Status Trade Stone",Content="Menunggu..."})
-
-TabTrading:CreateDropdown({
-    Name="Select Stone", Options=STONE_LIST, CurrentOption={STONE_LIST[1]},
-    MultipleOptions=false, Flag="TradeStoneSelect",
-    Callback=function(Option)
-        local sel=_type(Option)=="table" and Option[1] or Option
-        if sel then TradeState.ByStone.StoneName=sel end
-    end
-})
-TradeState.ByStone.StoneName=STONE_LIST[1]
-
-TabTrading:CreateInput({
-    Name="Amount", CurrentValue="1", PlaceholderText="Jumlah stone yang mau dikirim",
-    RemoveTextAfterFocusLost=false, Flag="TradeStoneAmount",
-    Callback=function(Text)
-        local n=tonumber(Text)
-        if n and n>0 then TradeState.ByStone.Amount=_math.floor(n) end
-    end
-})
-
-TabTrading:CreateButton({
-    Name="Check Stock",
-    Callback=function()
-        local stoneName=TradeState.ByStone.StoneName or STONE_LIST[1]
-        _task.spawn(function()
-            local fresh=ScanInventory()
-            InvCache=fresh
-            local count=fresh.stones[stoneName] or 0
-            if count==0 then
-                for name,c in _pairs(fresh.items) do
-                    if _string.lower(name)==_string.lower(stoneName) then count=c; break end
-                end
-            end
-            Rayfield:Notify({Title="Vechnost",Content=_string.format("You have %d %s",count,stoneName),Duration=4})
-        end)
-    end
-})
-
-TabTrading:CreateToggle({
-    Name="Start Trade Stone", CurrentValue=false, Flag="StartTradeStone",
-    Callback=function(Value)
-        if Value then
-            if not TradeState.TargetPlayer then
-                Rayfield:Notify({Title="Vechnost",Content="Pilih target player dulu!",Duration=3}); return end
-            TradeState.ByStone.Active=true; TradeState.ByStone.Sent=0
-            local target=TradeState.TargetPlayer
-            local stoneName=TradeState.ByStone.StoneName or STONE_LIST[1]
-            local total=TradeState.ByStone.Amount
-            warn("[Vechnost] Trade Stone:", stoneName, "x"..total, "->", target)
-            _task.spawn(function()
-                -- Selalu re-scan untuk stock akurat
-                local fresh=ScanInventory()
-                InvCache=fresh
-                local stock=fresh.stones[stoneName] or 0
-                if stock==0 then
-                    for name,c in _pairs(fresh.items) do
-                        if _string.lower(name)==_string.lower(stoneName) then stock=c; break end
-                    end
-                end
-                local actualTotal=(stock>0) and _math.min(total,stock) or total
-                for i=1,actualTotal do
-                    if not TradeState.ByStone.Active then break end
-                    _pcall(function()
-                        TradeStoneStatus:Set({Title="Status Trade Stone",
-                            Content=_string.format("Sending: %d/%d %s\nProgress: %d/%d",i,actualTotal,stoneName,i,actualTotal)})
-                    end)
-                    DoSendTrade(target, stoneName, 1)
-                    TradeState.ByStone.Sent=i
-                    _task.wait(RandDelay(0.8,0.2))
-                end
-                TradeState.ByStone.Active=false
-                _pcall(function()
-                    TradeStoneStatus:Set({Title="Status Trade Stone",
-                        Content=_string.format("Selesai: %d/%d %s",TradeState.ByStone.Sent,actualTotal,stoneName)})
-                end)
-                Rayfield:Notify({Title="Vechnost",Content="Trade Stone selesai! "..TradeState.ByStone.Sent.." "..stoneName,Duration=4})
-            end)
-        else
-            TradeState.ByStone.Active=false
-            Rayfield:Notify({Title="Vechnost",Content="Trade Stone dihentikan.",Duration=2})
-        end
-    end
-})
-
--- ===========================================================
--- TAB 3 - SETTINGS
--- ===========================================================
-TabSettings:CreateSection("Tentang")
-TabSettings:CreateParagraph({
-    Title="Vechnost v3.0.0",
-    Content="Webhook Logger + Auto Trading\nBAC Bypass Included\nFish It - Roblox\n\nby Vechnost | discord.gg/vechnost"
-})
-
-TabSettings:CreateSection("Debug Tools")
-TabSettings:CreateButton({
-    Name="Test Webhook",
-    Callback=function()
-        if Settings.Url=="" then
-            Rayfield:Notify({Title="Vechnost",Content="Isi webhook URL dulu!",Duration=3}); return end
-        _task.spawn(function() SendWebhook(BuildTestPayload(LocalPlayer.Name)) end)
-        Rayfield:Notify({Title="Vechnost",Content="Test message terkirim!",Duration=2})
-    end
-})
-
-TabSettings:CreateButton({
-    Name="Reset Log Counter",
-    Callback=function()
-        Settings.LogCount=0; Settings.SentUUID={}
-        Rayfield:Notify({Title="Vechnost",Content="Counter di-reset!",Duration=2})
-    end
-})
-
-TabSettings:CreateButton({
-    Name="Scan All Remotes",
-    Callback=function()
-        if not net then
-            Rayfield:Notify({Title="Vechnost",Content="net tidak tersedia",Duration=3}); return end
-        local found=0
-        _pcall(function()
-            for _,child in _ipairs(net:GetDescendants()) do
-                if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-                    found=found+1
-                    warn("[Vechnost] Remote:", child.ClassName, child.Name)
-                end
-            end
-        end)
-        Rayfield:Notify({Title="Vechnost",Content=found.." remote ditemukan (lihat console)",Duration=5})
-    end
-})
-
-TabSettings:CreateButton({
-    Name="Debug Inventory",
-    Callback=function()
-        _task.spawn(function()
-            local inv=ScanInventory()
-            InvCache=inv
-            local fc,sc=0,0
-            for name,count in _pairs(inv.items) do fc=fc+1; warn("[Fish]",name,"x"..count) end
-            for name,count in _pairs(inv.stones) do sc=sc+1; warn("[Stone]",name,"x"..count) end
-            Rayfield:Notify({Title="Vechnost",Content=fc.." jenis ikan, "..sc.." jenis stone (lihat console)",Duration=5})
-        end)
-    end
-})
-
--- ===========================================================
--- BAGIAN 18: INIT
--- ===========================================================
-Rayfield:LoadConfiguration()
-warn("[Vechnost] v3.0.0 Loaded! Tekan V untuk toggle GUI")
-warn("[Vechnost] Trade remote:", CanSendTradeRemote and CanSendTradeRemote.Name or "NOT FOUND - coba Scan All Remotes")
+warn("[Vechnost GUI v2] Loaded! Layout: Sidebar kiri | Divider | Panel kanan")
+warn("[Vechnost GUI v2] Tab aktif: Webhook Logger")
