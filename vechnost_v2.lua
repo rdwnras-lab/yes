@@ -1456,20 +1456,20 @@ TabInfo:CreateButton({
 -- =====================================================
 -- TAB: MAIN
 -- =====================================================
-TabMain:CreateSection("Auto Fishing")
+TabMain:CreateSection("Fishing")
 
 TabMain:CreateToggle({
-    Name = "Auto Click Fishing",
+    Name = "Instan",
     CurrentValue = false,
     Flag = "AutoClick",
     Callback = function(Value)
         Settings.AutoClick = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Click: ON" or "Auto Click: OFF", Duration = 2 })
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Instan: ON" or "Instan: OFF", Duration = 2 })
     end
 })
 
 TabMain:CreateToggle({
-    Name = "Auto Sell (tiap 30s)",
+    Name = "Auto Sell",
     CurrentValue = false,
     Flag = "AutoSellAll",
     Callback = function(Value)
@@ -1478,10 +1478,20 @@ TabMain:CreateToggle({
     end
 })
 
-TabMain:CreateSection("Utility")
+TabMain:CreateSection("Support Feature")
 
 TabMain:CreateToggle({
-    Name = "Anti-AFK",
+    Name = "Auto Sell",
+    CurrentValue = false,
+    Flag = "AutoSellAll",
+    Callback = function(Value)
+        Settings.AutoSellAll = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Sell: ON" or "Auto Sell: OFF", Duration = 2 })
+    end
+})
+
+TabMain:CreateToggle({
+    Name = "Anti AFK",
     CurrentValue = false,
     Flag = "AntiAFK",
     Callback = function(Value)
@@ -1500,8 +1510,6 @@ TabMain:CreateToggle({
     end
 })
 
-TabMain:CreateSection("Server")
-
 TabMain:CreateToggle({
     Name = "Auto Reconnect",
     CurrentValue = false,
@@ -1509,16 +1517,6 @@ TabMain:CreateToggle({
     Callback = function(Value)
         Settings.AutoReconnect = Value
         Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Reconnect: ON" or "Auto Reconnect: OFF", Duration = 2 })
-    end
-})
-
-TabMain:CreateToggle({
-    Name = "Ping Monitor Webhook",
-    CurrentValue = false,
-    Flag = "PingMonitor",
-    Callback = function(Value)
-        Settings.PingMonitor = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Ping Monitor: ON" or "Ping Monitor: OFF", Duration = 2 })
     end
 })
 
