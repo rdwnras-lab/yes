@@ -15,9 +15,9 @@
 -- BAGIAN 0: ANTI-BAC UTILITY
 -- =====================================================
 local function de(str)
-    -- Decode string yang di-encode dengan angka ASCII
+    -- Decode string yang di-encode dengan ASCII codes dipisah spasi
     local res = ""
-    for num in str:gmatch("%d+") do
+    for num in string.gmatch(str, "%d+") do
         res = res .. string.char(tonumber(num))
     end
     return res
@@ -25,40 +25,35 @@ end
 
 -- Encode string penting agar tidak mudah terdeteksi
 local s = {
-    core = de("10397 97101 1018358 117105"), -- "CoreGui"
-    players = de("1121089710810183115"),      -- "Players"
-    repStorage = de("82112101108105116101104 8311611110810197115116"), -- "ReplicatedStorage"
-    httpServ = de("7211611611210483116101102114"), -- "HttpService"
-    runServ = de("8211711583116101102114"),        -- "RunService"
-    userInput = de("85115101114327311211711683 83116110102114118"), -- "UserInputService"
-    tween = de("8411910110111083 83116110102114118"), -- "TweenService"
-    workspace = de("8711111410810511610497 83116110102114118"), -- "Workspace"
-    virtInput = de("86105114116117108105327311211711683104110111116114"), -- "VirtualInputManager"
-    virtUser = de("8610511411611710810511832117115101114"), -- "VirtualUser"
-    localPlayer = de("761119910111210897121101114"), -- "LocalPlayer"
-    playerGui = de("1121089710812111483117117"),    -- "PlayerGui"
-    packages = de("809711610097101115"),            -- "Packages"
-    index = de("95110100101120"),                   -- "_Index"
-    sleitnick = de("1151081011051161101059910710646"), -- "sleitnick_net@0.2.0"
-    net = de("110101116"),                          -- "net"
-    fishNotify = de("8269/791081051011101011011687116105111110"), -- "RE/ObtainedNewFishNotification"
-    items = de("73116101109115"),                    -- "Items"
-    replion = de("82101112108105111110"),            -- "Replion"
-    data = de("6897116"),                            -- "Data"
+    core = de("67 111 114 101 71 117 105"), -- "CoreGui"
+    players = de("80 108 97 121 101 114 115"), -- "Players"
+    repStorage = de("82 101 112 108 105 99 97 116 101 100 83 116 111 114 97 103 101"), -- "ReplicatedStorage"
+    httpServ = de("72 116 116 112 83 101 114 118 105 99 101"), -- "HttpService"
+    runServ = de("82 117 110 83 101 114 118 105 99 101"), -- "RunService"
+    userInput = de("85 115 101 114 73 110 112 117 116 83 101 114 118 105 99 101"), -- "UserInputService"
+    tween = de("84 119 101 101 110 83 101 114 118 105 99 101"), -- "TweenService"
+    workspace = de("87 111 114 107 115 112 97 99 101"), -- "Workspace"
+    virtInput = de("86 105 114 116 117 97 108 73 110 112 117 116 77 97 110 97 103 101 114"), -- "VirtualInputManager"
+    virtUser = de("86 105 114 116 117 97 108 85 115 101 114"), -- "VirtualUser"
+    localPlayer = de("76 111 99 97 108 80 108 97 121 101 114"), -- "LocalPlayer"
+    playerGui = de("80 108 97 121 101 114 71 117 105"), -- "PlayerGui"
+    packages = de("80 97 99 107 97 103 101 115"), -- "Packages"
+    index = de("95 73 110 100 101 120"), -- "_Index"
+    sleitnick = de("115 108 101 105 116 110 105 99 107 95 110 101 116 64 48 46 50 46 48"), -- "sleitnick_net@0.2.0"
+    net = de("110 101 116"), -- "net"
+    fishNotify = de("82 69 47 79 98 116 97 105 110 101 100 78 101 119 70 105 115 104 78 111 116 105 102 105 99 97 116 105 111 110"), -- "RE/ObtainedNewFishNotification"
+    items = de("73 116 101 109 115"), -- "Items"
+    replion = de("82 101 112 108 105 111 110"), -- "Replion"
+    data = de("68 97 116 97"), -- "Data"
 }
-
--- Fungsi untuk mendapatkan service dengan aman
-local function getService(name)
-    return game:GetService(name)
-end
 
 -- =====================================================
 -- BAGIAN 1: CLEANUP SYSTEM
 -- =====================================================
-local Core = getService(s.core)
+local Core = game:GetService(s.core)
 local guiNames = {
-    Main = de("861019910411111511611795 8311011773 73"), -- "Vechnost_Main_UI"
-    Mobile = de("861019910411111511611795 791111110105108101 66114114111110"), -- "Vechnost_Mobile_Button"
+    Main = de("86 101 99 104 110 111 115 116 95 77 97 105 110 95 85 73"), -- "Vechnost_Main_UI"
+    Mobile = de("86 101 99 104 110 111 115 116 95 77 111 98 105 108 101 95 66 117 116 116 111 110"), -- "Vechnost_Mobile_Button"
 }
 
 for _, v in pairs(Core:GetChildren()) do
@@ -68,17 +63,17 @@ for _, v in pairs(Core:GetChildren()) do
 end
 
 -- =====================================================
--- BAGIAN 2: SERVICES & GLOBALS (tersembunyi)
+-- BAGIAN 2: SERVICES & GLOBALS
 -- =====================================================
-local plrs = getService(s.players)
-local repStor = getService(s.repStorage)
-local http = getService(s.httpServ)
-local run = getService(s.runServ)
-local uis = getService(s.userInput)
-local tween = getService(s.tween)
-local ws = getService(s.workspace)
-local vim = getService(s.virtInput)
-local vu = getService(s.virtUser)
+local plrs = game:GetService(s.players)
+local repStor = game:GetService(s.repStorage)
+local http = game:GetService(s.httpServ)
+local run = game:GetService(s.runServ)
+local uis = game:GetService(s.userInput)
+local tween = game:GetService(s.tween)
+local ws = game:GetService(s.workspace)
+local vim = game:GetService(s.virtInput)
+local vu = game:GetService(s.virtUser)
 
 local localP = plrs.LocalPlayer
 local pgui = localP:WaitForChild(s.playerGui)
@@ -98,7 +93,7 @@ do
 end
 
 -- =====================================================
--- BAGIAN 3: SETTINGS STATE (tidak banyak diubah)
+-- BAGIAN 3: SETTINGS STATE
 -- =====================================================
 local Settings = {
     Active = false,
@@ -130,7 +125,7 @@ local ShopSet = {
 }
 
 -- =====================================================
--- BAGIAN 4: FISH DATABASE (tetap)
+-- BAGIAN 4: FISH DATABASE
 -- =====================================================
 local FishDB = {}
 do
@@ -221,7 +216,7 @@ local RARITY_NAME_TO_TIER = {
 local RarityList = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
 
 -- =====================================================
--- BAGIAN 7: TELEPORT LOCATIONS (disamarkan)
+-- BAGIAN 7: TELEPORT LOCATIONS
 -- =====================================================
 local TeleportSpots = {}
 local islandDB = {
@@ -268,7 +263,7 @@ local function ScanIslands()
                 local nm = string.lower(obj.Name)
                 for _, isl in ipairs(islandDB) do
                     for _, kw in ipairs(isl[2]) do
-                        if nm:find(kw) then
+                        if string.find(nm, kw) then
                             local exists = false
                             for _, s in ipairs(TeleportSpots) do
                                 if s.Name == isl[1] then exists=true break end
@@ -286,7 +281,7 @@ local function ScanIslands()
         if spawn then
             local exists = false
             for _, s in ipairs(TeleportSpots) do
-                if string.lower(s.Name):find("spawn") then exists=true break end
+                if string.find(string.lower(s.Name), "spawn") then exists=true break end
             end
             if not exists then
                 table.insert(TeleportSpots, {Name="Spawn Point", Pos=spawn.Position, CFrame=spawn.CFrame+Vector3.new(0,5,0)})
@@ -326,7 +321,7 @@ end
 ScanIslands()
 
 -- =====================================================
--- BAGIAN 8: SHOP DATABASE (disamarkan)
+-- BAGIAN 8: SHOP DATABASE
 -- =====================================================
 local ShopData = {
     Charms = {
@@ -359,7 +354,7 @@ local function GetShopRemote(cat)
     for _, child in ipairs(net:GetDescendants()) do
         if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
             local lname = string.lower(child.Name)
-            if lname:find(string.lower(cat)) or lname:find("buy") then
+            if string.find(lname, string.lower(cat)) or string.find(lname, "buy") then
                 return child
             end
         end
@@ -378,7 +373,7 @@ local function BuyItem(cat, item)
 end
 
 -- =====================================================
--- BAGIAN 9: HTTP REQUEST (tersembunyi)
+-- BAGIAN 9: HTTP REQUEST
 -- =====================================================
 local HttpReq
 do
@@ -391,7 +386,7 @@ do
 end
 
 -- =====================================================
--- BAGIAN 10: ICON & WEBHOOK (sedikit diubah)
+-- BAGIAN 10: ICON & WEBHOOK
 -- =====================================================
 local IconCache = {}
 local IconWaiter = {}
@@ -467,7 +462,7 @@ local function SendHook(payload)
     if Settings.Url=="" or not HttpReq or not payload then return end
     pcall(function()
         local url = Settings.Url
-        if url:find("?") then url=url.."&with_components=true" else url=url.."?with_components=true" end
+        if string.find(url, "?") then url=url.."&with_components=true" else url=url.."?with_components=true" end
         HttpReq({
             Url = url, Method = "POST",
             Headers = {["Content-Type"]="application/json"},
@@ -477,7 +472,7 @@ local function SendHook(payload)
 end
 
 -- =====================================================
--- BAGIAN 11: FISH DETECTION (dengan nama samar)
+-- BAGIAN 11: FISH DETECTION
 -- =====================================================
 local connections = {}
 local function onFishCaught(pArg, wData, wrap)
@@ -521,7 +516,7 @@ local function StopLog()
 end
 
 -- =====================================================
--- BAGIAN 12: FISHING AUTOMATION (dengan pengaburan)
+-- BAGIAN 12: FISHING AUTOMATION
 -- =====================================================
 local FishRemotes = {}
 do
@@ -529,13 +524,13 @@ do
         for _, child in ipairs(net:GetDescendants()) do
             if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
                 local lname = string.lower(child.Name)
-                if lname:find("cast") or lname:find("throw") then
+                if string.find(lname, "cast") or string.find(lname, "throw") then
                     FishRemotes.Cast = FishRemotes.Cast or child
-                elseif lname:find("reel") or lname:find("pull") or lname:find("catch") then
+                elseif string.find(lname, "reel") or string.find(lname, "pull") or string.find(lname, "catch") then
                     FishRemotes.Reel = FishRemotes.Reel or child
-                elseif lname:find("shake") then
+                elseif string.find(lname, "shake") then
                     FishRemotes.Shake = FishRemotes.Shake or child
-                elseif lname:find("sell") then
+                elseif string.find(lname, "sell") then
                     FishRemotes.Sell = FishRemotes.Sell or child
                 end
             end
@@ -557,7 +552,7 @@ local function biting()
     for _,g in ipairs(pg:GetDescendants()) do
         if g:IsA("GuiObject") and g.Visible then
             local nm = string.lower(g.Name)
-            if nm:find("bite") or nm:find("catch") or nm:find("!") or nm:find("reel") then
+            if string.find(nm, "bite") or string.find(nm, "catch") or string.find(nm, "!") or string.find(nm, "reel") then
                 return true
             end
         end
@@ -571,7 +566,7 @@ local function shaking()
     for _,g in ipairs(pg:GetDescendants()) do
         if g:IsA("GuiObject") and g.Visible then
             local nm = string.lower(g.Name)
-            if nm:find("shake") or nm:find("struggle") or nm:find("minigame") then
+            if string.find(nm, "shake") or string.find(nm, "struggle") or string.find(nm, "minigame") then
                 return true
             end
         end
@@ -627,7 +622,7 @@ task.spawn(function()
 end)
 
 -- =====================================================
--- BAGIAN 13: TRADING (diringkas)
+-- BAGIAN 13: TRADING SYSTEM
 -- =====================================================
 local Trade = {
     Target = nil,
@@ -684,7 +679,7 @@ local function GetTradeRemoteFunc()
     pcall(function()
         for _, child in pairs(net:GetDescendants()) do
             if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-                if string.lower(child.Name):find("trade") then
+                if string.find(string.lower(child.Name), "trade") then
                     TradeRemote = child
                     break
                 end
@@ -714,7 +709,7 @@ local function SendTrade(targetName, itemName, qty)
 end
 
 -- =====================================================
--- BAGIAN 14: UI COLOR SCHEME (tetap)
+-- BAGIAN 14: UI COLOR SCHEME
 -- =====================================================
 local Colors = {
     Background = Color3.fromRGB(15,17,26),
@@ -739,7 +734,7 @@ local Colors = {
 }
 
 -- =====================================================
--- BAGIAN 15: CREATE MAIN GUI (dengan nama diacak)
+-- BAGIAN 15: CREATE MAIN GUI
 -- =====================================================
 local sg = Instance.new("ScreenGui")
 sg.Name = guiNames.Main
@@ -832,7 +827,7 @@ dropContainer.BackgroundTransparency = 1
 dropContainer.ZIndex = 100
 
 -- =====================================================
--- BAGIAN 16: TAB SYSTEM (sama)
+-- BAGIAN 16: TAB SYSTEM
 -- =====================================================
 local tabContents = {}
 local tabButtons = {}
@@ -912,7 +907,7 @@ for _,td in ipairs(tabs) do
 end
 
 -- =====================================================
--- BAGIAN 17: UI COMPONENT CREATORS (diringkas)
+-- BAGIAN 17: UI COMPONENT CREATORS
 -- =====================================================
 local orderCnt = {}
 local function nextOrder(tab) orderCnt[tab] = (orderCnt[tab] or 0) + 1; return orderCnt[tab] end
@@ -958,7 +953,7 @@ local function Input(tab, name, placeholder, cb)
     local box = Instance.new("TextBox", f)
     box.Size = UDim2.new(1,-20,0,26); box.Position = UDim2.new(0,10,0,26); box.BackgroundColor3 = Colors.Background; box.BorderSizePixel = 0; box.Text = ""; box.PlaceholderText = placeholder or ""; box.PlaceholderColor3 = Colors.TextMuted; box.TextColor3 = Colors.Text; box.TextSize = 11; box.Font = Enum.Font.Gotham; box.ClearTextOnFocus = false
     Instance.new("UICorner", box).CornerRadius = UDim.new(0,6)
-    Instance.new("UIPadding", box).PaddingLeft = UDim.new(0,10); Instance.new("UIPadding", box).PaddingRight = UDim.new(0,10)
+    Instance.new("UIPadding", box).PaddingLeft = UDim.new(0,10); box.PaddingRight = UDim.new(0,10)
     box.FocusLost:Connect(function() if cb then cb(box.Text) end end)
     return {Frame=f, TextBox=box, Get=function() return box.Text end, Set=function(_,v) box.Text=v end}
 end
@@ -1064,7 +1059,7 @@ local function Slider(tab, name, min, max, default, cb)
     return {Frame=f, Set=upd, Get=function() return val end}
 end
 
--- Dropdown (dengan modifikasi)
+-- Dropdown
 local activeDrop = nil
 local function Dropdown(tab, name, opts, default, cb)
     local p = tabContents[tab]; if not p then return end
@@ -1174,8 +1169,9 @@ local function Notify(tit, msg, dur)
 end
 
 -- =====================================================
--- BAGIAN 20: POPULATE TAB (dipersingkat)
+-- BAGIAN 18: POPULATE TAB CONTENTS
 -- =====================================================
+
 -- Info
 Section("Info","Player Information")
 Paragraph("Info","Player",localP.Name)
@@ -1186,19 +1182,19 @@ Paragraph("Info","Vechnost v2.5.0","Complete Fish It Automation Suite\nby Vechno
 
 -- Fishing
 Section("Fishing","Auto Fishing")
-Toggle("Fishing","Auto Cast",false,function(v) Fishing.AutoCast=v; Notify("Vechnost",v and "Auto Cast ON"or"OFF",2) end)
-Toggle("Fishing","Auto Reel",false,function(v) Fishing.AutoReel=v; Notify("Vechnost",v and "Auto Reel ON"or"OFF",2) end)
-Toggle("Fishing","Auto Shake",false,function(v) Fishing.AutoShake=v; Notify("Vechnost",v and "Auto Shake ON"or"OFF",2) end)
+Toggle("Fishing","Auto Cast",false,function(v) Fishing.AutoCast=v; Notify("Vechnost",v and "Auto Cast ON" or "OFF",2) end)
+Toggle("Fishing","Auto Reel",false,function(v) Fishing.AutoReel=v; Notify("Vechnost",v and "Auto Reel ON" or "OFF",2) end)
+Toggle("Fishing","Auto Shake",false,function(v) Fishing.AutoShake=v; Notify("Vechnost",v and "Auto Shake ON" or "OFF",2) end)
 Section("Fishing","Clicker Settings")
 Slider("Fishing","Click Speed (CPS)",10,100,50,function(v) Fishing.ClickSpeed=v end)
-Toggle("Fishing","Perfect Catch",false,function(v) Fishing.PerfectCatch=v; Notify("Vechnost",v and "Perfect Catch ON"or"OFF",2) end)
+Toggle("Fishing","Perfect Catch",false,function(v) Fishing.PerfectCatch=v; Notify("Vechnost",v and "Perfect Catch ON" or "OFF",2) end)
 Section("Fishing","Utility")
-Toggle("Fishing","Anti AFK",false,function(v) Fishing.AntiAFK=v; Notify("Vechnost",v and "Anti AFK ON"or"OFF",2) end)
-Toggle("Fishing","Auto Sell",false,function(v) Fishing.AutoSell=v; Notify("Vechnost",v and "Auto Sell ON"or"OFF",2) end)
+Toggle("Fishing","Anti AFK",false,function(v) Fishing.AntiAFK=v; Notify("Vechnost",v and "Anti AFK ON" or "OFF",2) end)
+Toggle("Fishing","Auto Sell",false,function(v) Fishing.AutoSell=v; Notify("Vechnost",v and "Auto Sell ON" or "OFF",2) end)
 
 -- Teleport
 Section("Teleport","Island Teleport")
-local tpDrop = Dropdown("Teleport","Select Island",GetTeleportNames(),nil,function(s) if s and s~="(Scan first)" then local ok,_=TeleportTo(s); Notify("Vechnost",ok and "Teleported"or"Failed",2) end end)
+local tpDrop = Dropdown("Teleport","Select Island",GetTeleportNames(),nil,function(s) if s and s~="(Scan first)" then local ok,_=TeleportTo(s); Notify("Vechnost",ok and "Teleported" or "Failed",2) end end)
 Button("Teleport","Refresh Locations",function() ScanIslands(); tpDrop:Refresh(GetTeleportNames(),false); Notify("Vechnost","Found "..#TeleportSpots.." spots",2) end)
 Section("Teleport","Quick Teleport")
 Button("Teleport","TP to Spawn",function() local c=localP.Character; if c and c:FindFirstChild("HumanoidRootPart") then local s=ws:FindFirstChildOfClass("SpawnLocation"); if s then c.HumanoidRootPart.CFrame=s.CFrame+Vector3.new(0,5,0); Notify("Vechnost","Teleported to Spawn",2) end end end)
@@ -1239,13 +1235,13 @@ local stoneDrop = Dropdown("Trading","Select Stone",STONE_ITEMS,nil,function(s) 
 -- Shop
 Section("Shop","Auto Buy Charm")
 local charmDrop = Dropdown("Shop","Select Charm",ShopData.Charms,nil,function(s) ShopSet.SelectedCharm=s end)
-Toggle("Shop","Auto Buy Charm",false,function(v) ShopSet.AutoBuyCharm=v; if v and ShopSet.SelectedCharm then task.spawn(function() while ShopSet.AutoBuyCharm do BuyItem("Charm",ShopSet.SelectedCharm); task.wait(1) end end) end; Notify("Vechnost",v and "Auto Charm ON"or"OFF",2) end)
+Toggle("Shop","Auto Buy Charm",false,function(v) ShopSet.AutoBuyCharm=v; if v and ShopSet.SelectedCharm then task.spawn(function() while ShopSet.AutoBuyCharm do BuyItem("Charm",ShopSet.SelectedCharm); task.wait(1) end end) end; Notify("Vechnost",v and "Auto Charm ON" or "OFF",2) end)
 Section("Shop","Auto Buy Weather")
 local weatherDrop = Dropdown("Shop","Select Weather",ShopData.Weather,nil,function(s) ShopSet.SelectedWeather=s end)
-Toggle("Shop","Auto Buy Weather",false,function(v) ShopSet.AutoBuyWeather=v; if v and ShopSet.SelectedWeather then BuyItem("Weather",ShopSet.SelectedWeather) end; Notify("Vechnost",v and "Weather changed!"or"OFF",2) end)
+Toggle("Shop","Auto Buy Weather",false,function(v) ShopSet.AutoBuyWeather=v; if v and ShopSet.SelectedWeather then BuyItem("Weather",ShopSet.SelectedWeather) end; Notify("Vechnost",v and "Weather changed!" or "OFF",2) end)
 Section("Shop","Auto Buy Bait")
 local baitDrop = Dropdown("Shop","Select Bait",ShopData.Bait,nil,function(s) ShopSet.SelectedBait=s end)
-Toggle("Shop","Auto Buy Bait",false,function(v) ShopSet.AutoBuyBait=v; if v and ShopSet.SelectedBait then task.spawn(function() while ShopSet.AutoBuyBait do BuyItem("Bait",ShopSet.SelectedBait); task.wait(2) end end) end; Notify("Vechnost",v and "Auto Bait ON"or"OFF",2) end)
+Toggle("Shop","Auto Buy Bait",false,function(v) ShopSet.AutoBuyBait=v; if v and ShopSet.SelectedBait then task.spawn(function() while ShopSet.AutoBuyBait do BuyItem("Bait",ShopSet.SelectedBait); task.wait(2) end end) end; Notify("Vechnost",v and "Auto Bait ON" or "OFF",2) end)
 Section("Shop","Merchant Shop")
 local merchDrop = Dropdown("Shop","Select Item",ShopData.Merchant,nil,function() end)
 Button("Shop","Buy Selected Item",function() local sel=merchDrop:Get(); if sel then BuyItem("Merchant",sel); Notify("Vechnost","Purchased "..sel,2) else Notify("Vechnost","Select item",2) end end)
@@ -1259,7 +1255,7 @@ local urlBuf = ""
 Input("Webhook","Discord Webhook URL","https://discord.com/api/webhooks/...",function(t) urlBuf=t end)
 Button("Webhook","Save Webhook URL",function() local u=urlBuf:gsub("%s+",""); if not u:match("^https://discord.com/api/webhooks/") and not u:match("^https://canary.discord.com/api/webhooks/") then Notify("Vechnost","Invalid URL",3) return end; Settings.Url=u; Notify("Vechnost","URL saved",2) end)
 Section("Webhook","Mode")
-Toggle("Webhook","Server-Wide Mode",true,function(v) Settings.ServerWide=v; Notify("Vechnost",v and "Server-Wide"or"Local Only",2) end)
+Toggle("Webhook","Server-Wide Mode",true,function(v) Settings.ServerWide=v; Notify("Vechnost",v and "Server-Wide" or "Local Only",2) end)
 Section("Webhook","Control")
 local logToggle = Toggle("Webhook","Enable Logger",false,function(v)
     if v then
@@ -1269,7 +1265,7 @@ local logToggle = Toggle("Webhook","Enable Logger",false,function(v)
 end)
 Section("Webhook","Status")
 local statusPar = Paragraph("Webhook","Logger Status","Offline")
-task.spawn(function() while true do task.wait(2) if Settings.Active then statusPar:Set({Title="Logger Status",Content=string.format("Active | Mode: %s | Logged: %d",Settings.ServerWide and "Server-Wide"or"Local",Settings.LogCount)}) else statusPar:Set({Title="Logger Status",Content="Offline"}) end end end)
+task.spawn(function() while true do task.wait(2) if Settings.Active then statusPar:Set({Title="Logger Status",Content=string.format("Active | Mode: %s | Logged: %d",Settings.ServerWide and "Server-Wide" or "Local",Settings.LogCount)}) else statusPar:Set({Title="Logger Status",Content="Offline"}) end end end)
 
 -- Setting
 Section("Setting","Testing")
@@ -1285,7 +1281,7 @@ Section("Setting","Credits")
 Paragraph("Setting","Vechnost Team","Thanks for using Vechnost!\nDiscord: discord.gg/vechnost")
 
 -- =====================================================
--- BAGIAN 21: UI CONTROLS (tetap)
+-- BAGIAN 19: UI CONTROLS
 -- =====================================================
 local dragging, dragOffset = false, Vector2.zero
 titleBar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true; dragOffset=Vector2.new(i.Position.X,i.Position.Y)-Vector2.new(main.AbsolutePosition.X,main.AbsolutePosition.Y) end end)
@@ -1301,7 +1297,7 @@ minBtn.MouseButton1Click:Connect(function() minimized = not minimized; local sz 
 uis.InputBegan:Connect(function(i,g) if not g and i.KeyCode==Enum.KeyCode.V then main.Visible = not main.Visible end end)
 
 -- =====================================================
--- BAGIAN 22: MOBILE BUTTON
+-- BAGIAN 20: MOBILE BUTTON
 -- =====================================================
 local oldMob = Core:FindFirstChild(guiNames.Mobile); if oldMob then oldMob:Destroy() end
 local mobGui = Instance.new("ScreenGui", Core)
@@ -1332,7 +1328,7 @@ run.RenderStepped:Connect(function()
 end)
 
 -- =====================================================
--- BAGIAN 23: INIT
+-- BAGIAN 21: INIT
 -- =====================================================
 switchTab("Info")
 warn("[Vechnost] v2.5.0 (Anti-BAC) Loaded!")
