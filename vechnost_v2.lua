@@ -2,10 +2,11 @@
     FILE: vechnost_v2.lua
     BRAND: Vechnost
     VERSION: 2.0.0
-    DESC: Server-Wide Fish Webhook Logger + Auto Trading System for Roblox "Fish It"
+    DESC: Server-Wide Fish Webhook Logger + Auto Trading System + Teleport for Roblox "Fish It"
           Logs fish catches from ALL players in the server
           Sends rich notifications to Discord via Webhook
           Auto Trade: by Name, by Coin, by Rarity, by Stone
+          Teleport: to all islands in Fish It
     UI: Custom Dark Blue Sidebar Design
 ]]
 
@@ -49,11 +50,11 @@ local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Safe load game-specific remotes
 local net, ObtainedNewFish
 do
     local ok, err = pcall(function()
@@ -935,7 +936,230 @@ local function StopLogger()
 end
 
 -- =====================================================
--- BAGIAN 11: TRADING SYSTEM
+-- BAGIAN 11: TELEPORT SYSTEM - FISH IT ISLANDS
+-- =====================================================
+
+local TeleportLocations = {}
+
+local function ScanIslands()
+    TeleportLocations = {}
+    
+    local knownIslandNames = {
+        "Moosewood", "Roslit Bay", "Roslit", "Mushgrove Swamp", "Mushgrove",
+        "Snowcap", "Snowcap Island", "Terrapin", "Terrapin Island",
+        "Forsaken Shores", "Forsaken", "Sunstone", "Sunstone Island",
+        "Kepler", "Kepler Island", "Ancient Isle", "Ancient",
+        "Volcanic", "Volcanic Island", "Lava", "Magma",
+        "Crystal", "Crystal Caverns", "Caverns",
+        "Deep Ocean", "Deep Sea", "Depths", "Abyss",
+        "Coral", "Coral Reef", "Reef",
+        "Spawn", "Hub", "Main", "Start", "Starter",
+        "Ocean", "Sea", "Beach", "Shore",
+        "Monster", "Monster Island", "Boss",
+        "Event", "Event Island", "Special",
+        "Secret", "Hidden", "Mystery",
+        "Treasure", "Treasure Island", "Gold",
+        "Ice", "Ice Island", "Arctic", "Frozen",
+        "Desert", "Desert Island", "Sand",
+        "Jungle", "Jungle Island", "Tropical",
+        "Enchanted", "Magic", "Mystic",
+        "Dark", "Shadow", "Night",
+        "Sky", "Cloud", "Floating",
+        "Underground", "Cave", "Cavern",
+        "Dock", "Pier", "Harbor", "Port",
+        "Shop", "Store", "Market", "Merchant",
+        "Appraiser", "Appraisal",
+        "Aquarium", "Collection", "Museum",
+        "Quest", "Mission", "NPC"
+    }
+    
+    pcall(function()
+        local zones = Workspace:FindFirstChild("Zones") or Workspace:FindFirstChild("Islands") or Workspace:FindFirstChild("Locations") or Workspace:FindFirstChild("Areas")
+        if zones then
+            for _, zone in pairs(zones:GetChildren()) do
+                if zone:IsA("Model") or zone:IsA("Folder") or zone:IsA("Part") or zone:IsA("BasePart") then
+                    local pos = nil
+                    if zone:IsA("BasePart") then
+                        pos = zone.Position
+                    elseif zone:IsA("Model") then
+                        if zone.PrimaryPart then
+                            pos = zone.PrimaryPart.Position
+                        elseif zone:FindFirstChildWhichIsA("BasePart") then
+                            pos = zone:FindFirstChildWhichIsA("BasePart").Position
+                        end
+                    end
+                    
+                    if pos then
+                        table.insert(TeleportLocations, {
+                            Name = zone.Name,
+                            Position = pos,
+                            CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+                        })
+                    end
+                end
+            end
+        end
+    end)
+    
+    pcall(function()
+        local teleporters = {}
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                local name = string.lower(obj.Name)
+                if string.find(name, "teleport") or string.find(name, "portal") or string.find(name, "warp") or string.find(name, "travel") then
+                    local displayName = obj.Name
+                    if obj.Parent and obj.Parent.Name ~= "Workspace" then
+                        displayName = obj.Parent.Name .. " - " .. obj.Name
+                    end
+                    table.insert(teleporters, {
+                        Name = displayName,
+                        Position = obj.Position,
+                        CFrame = obj.CFrame + Vector3.new(0, 3, 0)
+                    })
+                end
+            end
+        end
+        for _, tp in pairs(teleporters) do
+            table.insert(TeleportLocations, tp)
+        end
+    end)
+    
+    pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("Model") or obj:IsA("Folder") then
+                local objName = obj.Name
+                for _, islandName in pairs(knownIslandNames) do
+                    if string.lower(objName) == string.lower(islandName) or string.find(string.lower(objName), string.lower(islandName)) then
+                        local pos = nil
+                        if obj:IsA("Model") then
+                            if obj.PrimaryPart then
+                                pos = obj.PrimaryPart.Position
+                            elseif obj:FindFirstChildWhichIsA("BasePart") then
+                                pos = obj:FindFirstChildWhichIsA("BasePart").Position
+                            end
+                        end
+                        
+                        if pos then
+                            local exists = false
+                            for _, loc in pairs(TeleportLocations) do
+                                if loc.Name == objName then
+                                    exists = true
+                                    break
+                                end
+                            end
+                            
+                            if not exists then
+                                table.insert(TeleportLocations, {
+                                    Name = objName,
+                                    Position = pos,
+                                    CFrame = CFrame.new(pos + Vector3.new(0, 10, 0))
+                                })
+                            end
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end)
+    
+    pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") then
+                local promptName = obj.ObjectText ~= "" and obj.ObjectText or obj.ActionText
+                if promptName and promptName ~= "" then
+                    local parent = obj.Parent
+                    if parent and parent:IsA("BasePart") then
+                        local exists = false
+                        for _, loc in pairs(TeleportLocations) do
+                            if loc.Name == promptName then
+                                exists = true
+                                break
+                            end
+                        end
+                        
+                        if not exists then
+                            table.insert(TeleportLocations, {
+                                Name = "Prompt: " .. promptName,
+                                Position = parent.Position,
+                                CFrame = parent.CFrame + Vector3.new(0, 3, 0)
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    pcall(function()
+        local spawnLocation = Workspace:FindFirstChildOfClass("SpawnLocation")
+        if spawnLocation then
+            local exists = false
+            for _, loc in pairs(TeleportLocations) do
+                if string.find(string.lower(loc.Name), "spawn") then
+                    exists = true
+                    break
+                end
+            end
+            if not exists then
+                table.insert(TeleportLocations, {
+                    Name = "Spawn Point",
+                    Position = spawnLocation.Position,
+                    CFrame = spawnLocation.CFrame + Vector3.new(0, 5, 0)
+                })
+            end
+        end
+    end)
+    
+    if #TeleportLocations == 0 then
+        table.insert(TeleportLocations, {
+            Name = "Spawn (Default)",
+            Position = Vector3.new(0, 50, 0),
+            CFrame = CFrame.new(0, 50, 0)
+        })
+    end
+    
+    table.sort(TeleportLocations, function(a, b)
+        return a.Name < b.Name
+    end)
+    
+    warn("[Vechnost] Found", #TeleportLocations, "teleport locations")
+    return TeleportLocations
+end
+
+local function TeleportTo(locationName)
+    local character = LocalPlayer.Character
+    if not character then return false, "No character" end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return false, "No HumanoidRootPart" end
+    
+    for _, loc in pairs(TeleportLocations) do
+        if loc.Name == locationName then
+            humanoidRootPart.CFrame = loc.CFrame
+            warn("[Vechnost] Teleported to:", locationName)
+            return true, "Teleported to " .. locationName
+        end
+    end
+    
+    return false, "Location not found"
+end
+
+local function GetTeleportLocationNames()
+    local names = {}
+    for _, loc in pairs(TeleportLocations) do
+        table.insert(names, loc.Name)
+    end
+    if #names == 0 then
+        names = {"(No locations found)"}
+    end
+    return names
+end
+
+ScanIslands()
+
+-- =====================================================
+-- BAGIAN 12: TRADING SYSTEM
 -- =====================================================
 local TradeState = {
     TargetPlayer = nil,
@@ -1117,16 +1341,15 @@ local function FireTradeItem(targetUsername, itemName, quantity)
 end
 
 -- =====================================================
--- BAGIAN 12: CUSTOM UI LIBRARY - DARK BLUE SIDEBAR DESIGN
+-- BAGIAN 13: CUSTOM UI LIBRARY - DARK BLUE SIDEBAR DESIGN
 -- =====================================================
 
--- UI Color Scheme (sesuai foto)
 local Colors = {
     Background = Color3.fromRGB(15, 17, 26),
     Sidebar = Color3.fromRGB(20, 24, 38),
-    SidebarItem = Color3.fromRGB(25, 30, 48),
-    SidebarItemHover = Color3.fromRGB(35, 42, 68),
-    SidebarItemActive = Color3.fromRGB(40, 50, 85),
+    SidebarItem = Color3.fromRGB(30, 36, 58),
+    SidebarItemHover = Color3.fromRGB(40, 48, 75),
+    SidebarItemActive = Color3.fromRGB(45, 55, 90),
     Content = Color3.fromRGB(25, 28, 42),
     ContentItem = Color3.fromRGB(35, 40, 60),
     ContentItemHover = Color3.fromRGB(45, 52, 78),
@@ -1142,27 +1365,16 @@ local Colors = {
     ToggleOff = Color3.fromRGB(60, 65, 90),
 }
 
--- Tab Icons (menggunakan text icons karena Roblox limitations)
-local TabIcons = {
-    Info = "👤",
-    Fishing = "🎣",
-    Teleport = "📍",
-    Webhook = "🔔",
-    Setting = "⚙️",
-}
-
--- Create Main ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAMES.Main
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = CoreGui
 
--- Main Container
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 650, 0, 420)
-MainFrame.Position = UDim2.new(0.5, -325, 0.5, -210)
+MainFrame.Size = UDim2.new(0, 680, 0, 450)
+MainFrame.Position = UDim2.new(0.5, -340, 0.5, -225)
 MainFrame.BackgroundColor3 = Colors.Background
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -1177,7 +1389,6 @@ MainStroke.Color = Colors.Border
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
--- Title Bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 45)
@@ -1209,7 +1420,6 @@ TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TitleBar
 
--- Close Button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Name = "CloseBtn"
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
@@ -1226,7 +1436,6 @@ local CloseBtnCorner = Instance.new("UICorner")
 CloseBtnCorner.CornerRadius = UDim.new(0, 6)
 CloseBtnCorner.Parent = CloseBtn
 
--- Minimize Button
 local MinBtn = Instance.new("TextButton")
 MinBtn.Name = "MinBtn"
 MinBtn.Size = UDim2.new(0, 30, 0, 30)
@@ -1243,10 +1452,9 @@ local MinBtnCorner = Instance.new("UICorner")
 MinBtnCorner.CornerRadius = UDim.new(0, 6)
 MinBtnCorner.Parent = MinBtn
 
--- Sidebar
 local Sidebar = Instance.new("Frame")
 Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 160, 1, -50)
+Sidebar.Size = UDim2.new(0, 160, 1, -55)
 Sidebar.Position = UDim2.new(0, 5, 0, 50)
 Sidebar.BackgroundColor3 = Colors.Sidebar
 Sidebar.BorderSizePixel = 0
@@ -1268,11 +1476,10 @@ SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
 SidebarLayout.Padding = UDim.new(0, 5)
 SidebarLayout.Parent = Sidebar
 
--- Content Area
 local ContentArea = Instance.new("Frame")
 ContentArea.Name = "ContentArea"
-ContentArea.Size = UDim2.new(1, -180, 1, -55)
-ContentArea.Position = UDim2.new(0, 175, 0, 50)
+ContentArea.Size = UDim2.new(1, -180, 1, -60)
+ContentArea.Position = UDim2.new(0, 175, 0, 55)
 ContentArea.BackgroundColor3 = Colors.Content
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
@@ -1281,12 +1488,10 @@ local ContentCorner = Instance.new("UICorner")
 ContentCorner.CornerRadius = UDim.new(0, 10)
 ContentCorner.Parent = ContentArea
 
--- Tab Content Containers
 local TabContents = {}
 local TabButtons = {}
 local CurrentTab = nil
 
--- Tabs Definition
 local Tabs = {
     {Name = "Info", Icon = "👤", LayoutOrder = 1},
     {Name = "Fishing", Icon = "🎣", LayoutOrder = 2},
@@ -1295,11 +1500,10 @@ local Tabs = {
     {Name = "Setting", Icon = "⚙️", LayoutOrder = 5},
 }
 
--- Create Tab Button Function
 local function CreateTabButton(tabData)
     local TabBtn = Instance.new("TextButton")
     TabBtn.Name = tabData.Name .. "Tab"
-    TabBtn.Size = UDim2.new(1, 0, 0, 42)
+    TabBtn.Size = UDim2.new(1, 0, 0, 44)
     TabBtn.BackgroundColor3 = Colors.SidebarItem
     TabBtn.BorderSizePixel = 0
     TabBtn.Text = ""
@@ -1349,7 +1553,6 @@ local function CreateTabButton(tabData)
     return TabBtn
 end
 
--- Create Tab Content Function
 local function CreateTabContent(tabName)
     local Content = Instance.new("ScrollingFrame")
     Content.Name = tabName .. "Content"
@@ -1377,7 +1580,6 @@ local function CreateTabContent(tabName)
     return Content
 end
 
--- Switch Tab Function
 local function SwitchTab(tabName)
     if CurrentTab == tabName then return end
 
@@ -1396,7 +1598,6 @@ local function SwitchTab(tabName)
     CurrentTab = tabName
 end
 
--- Create All Tabs
 for _, tabData in ipairs(Tabs) do
     local btn = CreateTabButton(tabData)
     TabButtons[tabData.Name] = btn
@@ -1408,7 +1609,7 @@ for _, tabData in ipairs(Tabs) do
 end
 
 -- =====================================================
--- BAGIAN 13: UI COMPONENT CREATORS
+-- BAGIAN 14: UI COMPONENT CREATORS
 -- =====================================================
 
 local LayoutOrderCounter = {}
@@ -1418,7 +1619,6 @@ local function GetLayoutOrder(tabName)
     return LayoutOrderCounter[tabName]
 end
 
--- Section Creator
 local function CreateSection(tabName, sectionTitle)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1443,7 +1643,6 @@ local function CreateSection(tabName, sectionTitle)
     return Section
 end
 
--- Paragraph Creator
 local function CreateParagraph(tabName, title, content)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1498,7 +1697,6 @@ local function CreateParagraph(tabName, title, content)
     }
 end
 
--- Input Creator
 local function CreateInput(tabName, name, placeholder, callback)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1569,7 +1767,6 @@ local function CreateInput(tabName, name, placeholder, callback)
     }
 end
 
--- Button Creator
 local function CreateButton(tabName, name, callback)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1606,7 +1803,6 @@ local function CreateButton(tabName, name, callback)
     return Button
 end
 
--- Toggle Creator
 local function CreateToggle(tabName, name, default, callback)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1689,7 +1885,6 @@ local function CreateToggle(tabName, name, default, callback)
     }
 end
 
--- Dropdown Creator
 local function CreateDropdown(tabName, name, options, default, multiSelect, callback)
     local parent = TabContents[tabName]
     if not parent then return end
@@ -1942,7 +2137,7 @@ local function CreateDropdown(tabName, name, options, default, multiSelect, call
 end
 
 -- =====================================================
--- BAGIAN 14: NOTIFICATION SYSTEM
+-- BAGIAN 15: NOTIFICATION SYSTEM
 -- =====================================================
 
 local NotificationContainer = Instance.new("Frame")
@@ -2022,7 +2217,7 @@ local function Notify(title, content, duration)
 end
 
 -- =====================================================
--- BAGIAN 15: POPULATE TAB CONTENTS
+-- BAGIAN 16: POPULATE TAB CONTENTS
 -- =====================================================
 
 -- ===== INFO TAB =====
@@ -2057,9 +2252,95 @@ CreateSection("Fishing", "Auto Fishing")
 CreateParagraph("Fishing", "Coming Soon", "Auto Fishing features akan segera hadir!")
 
 -- ===== TELEPORT TAB =====
-CreateSection("Teleport", "Locations")
+CreateSection("Teleport", "Island Teleport")
 
-CreateParagraph("Teleport", "Coming Soon", "Teleport features akan segera hadir!")
+local TeleportStatusParagraph = CreateParagraph("Teleport", "Teleport Status", "Found " .. #TeleportLocations .. " locations")
+
+local TeleportDropdown = CreateDropdown("Teleport", "Select Island", GetTeleportLocationNames(), nil, false, function(selected)
+end)
+
+CreateButton("Teleport", "Teleport", function()
+    local selected = TeleportDropdown:GetValue()
+    if #selected == 0 or selected[1] == "(No locations found)" then
+        Notify("Vechnost", "Pilih lokasi terlebih dahulu!", 3)
+        return
+    end
+    
+    local locationName = selected[1]
+    local success, msg = TeleportTo(locationName)
+    
+    if success then
+        Notify("Vechnost", "Teleported to " .. locationName, 2)
+    else
+        Notify("Vechnost", "Failed: " .. msg, 3)
+    end
+end)
+
+CreateButton("Teleport", "Refresh Locations", function()
+    ScanIslands()
+    TeleportDropdown:Refresh(GetTeleportLocationNames(), false)
+    TeleportStatusParagraph:Set({
+        Title = "Teleport Status",
+        Content = "Found " .. #TeleportLocations .. " locations"
+    })
+    Notify("Vechnost", "Found " .. #TeleportLocations .. " locations", 2)
+end)
+
+CreateSection("Teleport", "Quick Teleport")
+
+CreateButton("Teleport", "Teleport to Spawn", function()
+    local character = LocalPlayer.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        local spawnFound = false
+        for _, loc in pairs(TeleportLocations) do
+            if string.find(string.lower(loc.Name), "spawn") or string.find(string.lower(loc.Name), "hub") or string.find(string.lower(loc.Name), "start") then
+                character.HumanoidRootPart.CFrame = loc.CFrame
+                Notify("Vechnost", "Teleported to " .. loc.Name, 2)
+                spawnFound = true
+                break
+            end
+        end
+        if not spawnFound then
+            local spawnLocation = Workspace:FindFirstChildOfClass("SpawnLocation")
+            if spawnLocation then
+                character.HumanoidRootPart.CFrame = spawnLocation.CFrame + Vector3.new(0, 5, 0)
+                Notify("Vechnost", "Teleported to Spawn", 2)
+            else
+                character.HumanoidRootPart.CFrame = CFrame.new(0, 50, 0)
+                Notify("Vechnost", "Teleported to Default Spawn", 2)
+            end
+        end
+    end
+end)
+
+CreateButton("Teleport", "Teleport to Nearest Player", function()
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        Notify("Vechnost", "No character found!", 3)
+        return
+    end
+    
+    local myPos = character.HumanoidRootPart.Position
+    local nearestPlayer = nil
+    local nearestDist = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (player.Character.HumanoidRootPart.Position - myPos).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearestPlayer = player
+            end
+        end
+    end
+    
+    if nearestPlayer then
+        character.HumanoidRootPart.CFrame = nearestPlayer.Character.HumanoidRootPart.CFrame + Vector3.new(3, 0, 0)
+        Notify("Vechnost", "Teleported to " .. nearestPlayer.Name, 2)
+    else
+        Notify("Vechnost", "No players found!", 3)
+    end
+end)
 
 -- ===== WEBHOOK TAB =====
 CreateSection("Webhook", "Rarity Filter")
@@ -2184,10 +2465,9 @@ CreateSection("Setting", "Credits")
 CreateParagraph("Setting", "Vechnost Team", "Terima kasih telah menggunakan Vechnost!\nDiscord: discord.gg/vechnost")
 
 -- =====================================================
--- BAGIAN 16: UI CONTROLS (Drag, Close, Minimize)
+-- BAGIAN 17: UI CONTROLS (Drag, Close, Minimize)
 -- =====================================================
 
--- Drag System
 local dragging = false
 local dragOffset = Vector2.zero
 
@@ -2211,7 +2491,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Close Button
 CloseBtn.MouseEnter:Connect(function()
     TweenService:Create(CloseBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Error}):Play()
 end)
@@ -2226,7 +2505,6 @@ CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
 end)
 
--- Minimize Button
 local isMinimized = false
 
 MinBtn.MouseEnter:Connect(function()
@@ -2240,13 +2518,12 @@ end)
 MinBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
     if isMinimized then
-        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 650, 0, 45)}):Play()
+        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 680, 0, 45)}):Play()
     else
-        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 650, 0, 420)}):Play()
+        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 680, 0, 450)}):Play()
     end
 end)
 
--- Keyboard Toggle (V key)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.V then
@@ -2255,7 +2532,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- =====================================================
--- BAGIAN 17: FLOATING TOGGLE BUTTON (Mobile)
+-- BAGIAN 18: FLOATING TOGGLE BUTTON (Mobile)
 -- =====================================================
 local oldBtn = CoreGui:FindFirstChild(GUI_NAMES.Mobile)
 if oldBtn then oldBtn:Destroy() end
@@ -2282,7 +2559,6 @@ FloatButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Float Button Drag
 local floatDragging = false
 local floatDragOffset = Vector2.zero
 
@@ -2310,12 +2586,12 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- =====================================================
--- BAGIAN 18: INIT
+-- BAGIAN 19: INIT
 -- =====================================================
 
--- Set default tab
 SwitchTab("Info")
 
 warn("[Vechnost] Custom UI v2.0 Loaded!")
 warn("[Vechnost] Toggle GUI: Press V or tap floating button")
+warn("[Vechnost] Found", #TeleportLocations, "teleport locations")
 Notify("Vechnost", "Script loaded successfully!", 3)
