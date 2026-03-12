@@ -1459,7 +1459,7 @@ TabInfo:CreateButton({
 TabMain:CreateSection("Fishing")
 
 TabMain:CreateToggle({
-    Name = "Instan",
+    Name = "Instan | all rod 2 notif",
     CurrentValue = false,
     Flag = "AutoClick",
     Callback = function(Value)
@@ -1469,7 +1469,7 @@ TabMain:CreateToggle({
 })
 
 TabMain:CreateToggle({
-    Name = "Auto Sell",
+    Name = "Blatan | all rod 5 notif",
     CurrentValue = false,
     Flag = "AutoSellAll",
     Callback = function(Value)
