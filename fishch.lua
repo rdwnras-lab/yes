@@ -1,13 +1,13 @@
--- Craft A World Script - Minimal Edition
+-- Craft A World Script - Fixed Edition
 -- WARNING: Educational purposes only. Use at your own risk.
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
 -- Services
-local Players             = game:GetService("Players")
-local RunService          = game:GetService("RunService")
-local ReplicatedStorage   = game:GetService("ReplicatedStorage")
-local Workspace           = game:GetService("Workspace")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local Workspace         = game:GetService("Workspace")
 
 local player    = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -18,96 +18,213 @@ player.CharacterAdded:Connect(function(char)
     hrp = char:WaitForChild("HumanoidRootPart")
 end)
 
--- State
+-- ============================================================
+-- WHITELIST: Semua nama block resmi di Craft A World
+-- (Dirt, Dirt BG, Gravel, Stone, Magma, dll)
+-- ============================================================
+local BLOCK_WHITELIST = {
+    -- Starter blocks
+    ["Dirt"]            = true,
+    ["Dirt BG"]         = true,
+    ["Dirt Background"] = true,
+    ["Gravel"]          = true,
+    ["Stone"]           = true,
+    ["Magma"]           = true,
+    ["Lava"]            = true,
+
+    -- Crafted / grown blocks
+    ["Grass"]           = true,
+    ["Grass BG"]        = true,
+    ["Sand"]            = true,
+    ["Glass Pane"]      = true,
+    ["Wooden Block"]    = true,
+    ["Wooden BG"]       = true,
+    ["Wooden Log"]      = true,
+    ["Concrete"]        = true,
+    ["Cactus"]          = true,
+    ["Sunflower"]       = true,
+    ["Mushroom"]        = true,
+    ["Crystal"]         = true,
+    ["Coal"]            = true,
+    ["Iron"]            = true,
+    ["Gold"]            = true,
+    ["Diamond"]         = true,
+    ["Cornflower"]      = true,
+    ["Blue"]            = true,
+    ["Red"]             = true,
+    ["Green"]           = true,
+    ["Yellow"]          = true,
+    ["Purple"]          = true,
+    ["Dark"]            = true,
+    ["White"]           = true,
+    ["Pink"]            = true,
+    ["Orange"]          = true,
+    ["Cyan"]            = true,
+    ["Bed"]             = true,
+    ["Door"]            = true,
+    ["Fence"]           = true,
+    ["Ladder"]          = true,
+    ["Chest"]           = true,
+    ["Torch"]           = true,
+    ["Lantern"]         = true,
+    ["Glass Spike"]     = true,
+    ["Tesla Coil"]      = true,
+    ["Wooden Sign"]     = true,
+    ["Wooden Table"]    = true,
+    ["Wooden Chair"]    = true,
+    ["Neptune"]         = true,
+    ["Small Lock"]      = true,
+    ["Medium Lock"]     = true,
+    ["Large Lock"]      = true,
+    ["World Lock"]      = true,
+}
+
+-- Blacklist ketat: part bawaan karakter & UI game
+local PART_BLACKLIST = {
+    ["Head"]              = true,
+    ["Torso"]             = true,
+    ["Left Arm"]          = true,
+    ["Right Arm"]         = true,
+    ["Left Leg"]          = true,
+    ["Right Leg"]         = true,
+    ["HumanoidRootPart"]  = true,
+    ["UpperTorso"]        = true,
+    ["LowerTorso"]        = true,
+    ["LeftUpperArm"]      = true,
+    ["RightUpperArm"]     = true,
+    ["LeftLowerArm"]      = true,
+    ["RightLowerArm"]     = true,
+    ["LeftHand"]          = true,
+    ["RightHand"]         = true,
+    ["LeftUpperLeg"]      = true,
+    ["RightUpperLeg"]     = true,
+    ["LeftLowerLeg"]      = true,
+    ["RightLowerLeg"]     = true,
+    ["LeftFoot"]          = true,
+    ["RightFoot"]         = true,
+    ["Baseplate"]         = true,
+    ["ParallaxPlane"]     = true,  -- background parallax visual
+    ["tileHighlight"]     = true,  -- UI highlight saat hover
+    ["TileHighlight"]     = true,
+    ["Highlight"]         = true,
+    ["SelectionBox"]      = true,
+    ["Cursor"]            = true,
+    ["Sky"]               = true,
+    ["Terrain"]           = true,
+    ["Camera"]            = true,
+}
+
+-- ============================================================
+-- STATE
+-- ============================================================
 local state = {
-    autoClearWorld  = false,
-    autoCollect     = false,
-    scannedBlocks   = {},
+    autoClearWorld = false,
+    autoCollect    = false,
+    scannedBlocks  = {},   -- list nama block yang ditemukan & cocok whitelist
 }
 
 -- ============================================================
 -- WINDOW
 -- ============================================================
 local Window = Fluent:CreateWindow({
-    Title        = "Craft A World",
-    SubTitle     = "Script v1.0",
-    TabWidth     = 160,
-    Size         = UDim2.fromOffset(500, 420),
-    Acrylic      = true,
-    Theme        = "Darker",
-    MinimizeKey  = Enum.KeyCode.RightControl
+    Title       = "Craft A World",
+    SubTitle    = "Script v1.1 — Fixed",
+    TabWidth    = 160,
+    Size        = UDim2.fromOffset(500, 440),
+    Acrylic     = true,
+    Theme       = "Darker",
+    MinimizeKey = Enum.KeyCode.RightControl
 })
 
 -- ============================================================
--- HOME TAB (satu-satunya tab)
+-- HOME TAB
 -- ============================================================
 local HomeTab = Window:AddTab({ Title = "Home", Icon = "home" })
 
--- ── Header ───────────────────────────────────────────────────
+-- Header
 local HeaderSection = HomeTab:AddSection("Craft A World - Main")
 HeaderSection:AddParagraph({
     Title   = "Welcome!",
     Content = "Script aktif. Minimize: Right Ctrl\nScan dulu sebelum aktifkan Auto Clear World."
 })
 
--- ── Auto Clear World ──────────────────────────────────────────
+-- ── AUTO CLEAR WORLD ─────────────────────────────────────────
 local ClearSection = HomeTab:AddSection("Auto Clear World")
 
--- Paragraf hasil scan — akan di-update setelah scan
 local ScanResultParagraph = ClearSection:AddParagraph({
     Title   = "Hasil Scan",
-    Content = "Belum ada scan. Tekan tombol Scan World dulu."
+    Content = "Belum di-scan. Tekan tombol Scan World terlebih dahulu."
 })
 
--- Helper: scan semua BasePart di Workspace yang bukan milik karakter
-local function scanBlocks()
+-- Fungsi scan: hanya ambil nama yang ada di BLOCK_WHITELIST
+local function scanWorldBlocks()
     local found = {}
     local seen  = {}
 
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if (obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation"))
-            and not obj:IsDescendantOf(character)
-            and obj.Name ~= "Baseplate"
-            and obj.Name ~= "HumanoidRootPart"
-            and obj.Name ~= "Head"
-            and not obj.Locked
-        then
-            if not seen[obj.Name] then
-                seen[obj.Name] = true
-                table.insert(found, obj.Name)
+        -- Harus BasePart / MeshPart
+        if not (obj:IsA("BasePart") or obj:IsA("MeshPart")) then
+            continue
+        end
+
+        local name = obj.Name
+
+        -- Skip jika ada di blacklist
+        if PART_BLACKLIST[name] then continue end
+
+        -- Skip jika milik salah satu karakter player
+        local isCharPart = false
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character and obj:IsDescendantOf(plr.Character) then
+                isCharPart = true
+                break
             end
+        end
+        if isCharPart then continue end
+
+        -- HANYA ambil yang ada di whitelist nama block resmi
+        if BLOCK_WHITELIST[name] and not seen[name] then
+            seen[name] = true
+            table.insert(found, name)
         end
     end
 
+    table.sort(found)   -- urutkan alfabetis biar rapi
     return found
 end
 
 -- Tombol Scan World
 ClearSection:AddButton({
     Title       = "🔍 Scan World",
-    Description = "Deteksi block yang ada di world (Dirt, Background, dll)",
+    Description = "Deteksi block resmi (Dirt, Stone, Magma, dll) di world ini",
     Callback    = function()
-        state.scannedBlocks = scanBlocks()
+        state.scannedBlocks = scanWorldBlocks()
 
         if #state.scannedBlocks == 0 then
-            ScanResultParagraph:SetDesc("Tidak ada block yang terdeteksi.")
+            ScanResultParagraph:SetDesc(
+                "❌ Tidak ada block yang cocok ditemukan.\n"
+                .. "Pastikan kamu sudah masuk ke dalam sebuah world."
+            )
         else
-            local display = {}
-            for i = 1, math.min(12, #state.scannedBlocks) do
-                table.insert(display, "• " .. state.scannedBlocks[i])
-            end
-            if #state.scannedBlocks > 12 then
-                table.insert(display, "... dan " .. (#state.scannedBlocks - 12) .. " block lainnya")
+            local lines = {}
+            for i, name in ipairs(state.scannedBlocks) do
+                table.insert(lines, "• " .. name)
+                if i >= 14 then
+                    if #state.scannedBlocks > 14 then
+                        table.insert(lines, "... +" .. (#state.scannedBlocks - 14) .. " lainnya")
+                    end
+                    break
+                end
             end
             ScanResultParagraph:SetDesc(
-                "✅ Ditemukan " .. #state.scannedBlocks .. " jenis block:\n"
-                .. table.concat(display, "\n")
+                "✅ " .. #state.scannedBlocks .. " jenis block ditemukan:\n"
+                .. table.concat(lines, "\n")
             )
         end
 
         Fluent:Notify({
             Title    = "Scan Selesai",
-            Content  = "Terdeteksi " .. #state.scannedBlocks .. " jenis block.",
+            Content  = "Ditemukan " .. #state.scannedBlocks .. " jenis block.",
             Duration = 3
         })
     end
@@ -116,15 +233,15 @@ ClearSection:AddButton({
 -- Toggle Auto Clear World
 local AutoClearToggle = ClearSection:AddToggle("AutoClearWorld", {
     Title       = "Auto Clear World",
-    Description = "Otomatis break semua block yang terdeteksi dari hasil scan",
+    Description = "Otomatis break semua block dari hasil scan",
     Default     = false
 })
 
 AutoClearToggle:OnChanged(function(value)
     if value and #state.scannedBlocks == 0 then
         Fluent:Notify({
-            Title    = "Peringatan!",
-            Content  = "Scan world dulu sebelum mengaktifkan Auto Clear!",
+            Title    = "⚠️ Peringatan",
+            Content  = "Lakukan Scan World dulu sebelum mengaktifkan Auto Clear!",
             Duration = 4
         })
         state.autoClearWorld = false
@@ -133,18 +250,18 @@ AutoClearToggle:OnChanged(function(value)
     end
     state.autoClearWorld = value
     Fluent:Notify({
-        Title    = "Auto Clear World",
-        Content  = value and "✅ AKTIF — Breaking blocks..." or "❌ Dimatikan.",
+        Title   = "Auto Clear World",
+        Content = value and "✅ AKTIF — Breaking blocks..." or "❌ Dimatikan.",
         Duration = 2
     })
 end)
 
--- ── Auto Collect Floating Items ───────────────────────────────
+-- ── AUTO COLLECT FLOATING ITEMS ──────────────────────────────
 local CollectSection = HomeTab:AddSection("Auto Collect Floating Items")
 
 CollectSection:AddParagraph({
     Title   = "Info",
-    Content = "Otomatis mengambil semua item / drop yang melayang\ndi world agar langsung masuk ke inventory kamu."
+    Content = "Secara otomatis mengambil item / drop yang melayang\ndi sekitar world kamu."
 })
 
 local AutoCollectToggle = CollectSection:AddToggle("AutoCollect", {
@@ -156,151 +273,206 @@ local AutoCollectToggle = CollectSection:AddToggle("AutoCollect", {
 AutoCollectToggle:OnChanged(function(value)
     state.autoCollect = value
     Fluent:Notify({
-        Title    = "Auto Collect",
-        Content  = value and "✅ AKTIF — Mengambil item..." or "❌ Dimatikan.",
+        Title   = "Auto Collect",
+        Content = value and "✅ AKTIF — Mengambil item..." or "❌ Dimatikan.",
         Duration = 2
     })
 end)
 
 -- ============================================================
--- BACKGROUND LOOPS
+-- HELPER: cari RemoteEvent berdasarkan daftar nama
 -- ============================================================
+local function findRemote(...)
+    local names = { ... }
+    -- Cari di folder umum terlebih dulu
+    local folders = {
+        ReplicatedStorage:FindFirstChild("Events"),
+        ReplicatedStorage:FindFirstChild("RemoteEvents"),
+        ReplicatedStorage:FindFirstChild("Remotes"),
+        ReplicatedStorage:FindFirstChild("RE"),
+        ReplicatedStorage:FindFirstChild("events"),
+        ReplicatedStorage,  -- langsung di RS
+    }
+    for _, folder in ipairs(folders) do
+        if folder then
+            for _, rName in ipairs(names) do
+                local r = folder:FindFirstChild(rName)
+                if r then return r end
+            end
+        end
+    end
+    return nil
+end
 
--- ── Loop: Auto Clear World ────────────────────────────────────
+-- ============================================================
+-- LOOP: Auto Clear World
+-- ============================================================
 spawn(function()
     while true do
-        task.wait(0.15)
+        task.wait(0.12)
 
-        if state.autoClearWorld and #state.scannedBlocks > 0 and character and hrp then
-            -- Buat lookup table nama block yang di-scan
-            local targetNames = {}
-            for _, name in ipairs(state.scannedBlocks) do
-                targetNames[name] = true
-            end
+        if not state.autoClearWorld or #state.scannedBlocks == 0 then continue end
+        if not character or not hrp then continue end
 
-            -- Cari remote break yang umum dipakai
-            local function findRemote(remoteName)
-                for _, folder in ipairs({ "Events", "RemoteEvents", "Remotes", "RE", "events" }) do
-                    local f = ReplicatedStorage:FindFirstChild(folder)
-                    if f then
-                        local r = f:FindFirstChild(remoteName)
-                        if r then return r end
+        -- Lookup cepat
+        local targetNames = {}
+        for _, n in ipairs(state.scannedBlocks) do
+            targetNames[n] = true
+        end
+
+        -- Cari remote break sekali per siklus
+        local breakRemote = findRemote(
+            "BreakBlock","breakBlock","Break","break",
+            "HitBlock","hitBlock","PunchBlock","punchBlock",
+            "Punch","punch","DamageBlock","damageBlock"
+        )
+
+        -- Kumpulkan kandidat block dulu (hindari modify saat iterate)
+        local targets = {}
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if (obj:IsA("BasePart") or obj:IsA("MeshPart"))
+                and targetNames[obj.Name]
+                and not PART_BLACKLIST[obj.Name]
+            then
+                -- Pastikan bukan milik karakter manapun
+                local isChar = false
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr.Character and obj:IsDescendantOf(plr.Character) then
+                        isChar = true; break
                     end
                 end
-                return ReplicatedStorage:FindFirstChild(remoteName)
-            end
-
-            local breakRemote = findRemote("BreakBlock")
-                or findRemote("breakBlock")
-                or findRemote("Break")
-                or findRemote("HitBlock")
-                or findRemote("PunchBlock")
-                or findRemote("Punch")
-
-            for _, obj in ipairs(Workspace:GetDescendants()) do
-                if not state.autoClearWorld then break end
-
-                local isTarget = (obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation"))
-                    and targetNames[obj.Name]
-                    and not obj:IsDescendantOf(character)
-                    and not obj.Locked
-
-                if isTarget then
-                    -- Teleport dekat block
-                    hrp.CFrame = CFrame.new(obj.Position + Vector3.new(0, 2, 0))
-
-                    -- Fire remote jika ada
-                    if breakRemote then
-                        pcall(function()
-                            if breakRemote:IsA("RemoteEvent") then
-                                breakRemote:FireServer(obj, obj.Position)
-                            elseif breakRemote:IsA("RemoteFunction") then
-                                breakRemote:InvokeServer(obj, obj.Position)
-                            end
-                        end)
-                    end
-
-                    -- Fallback: ClickDetector
-                    local cd = obj:FindFirstChildWhichIsA("ClickDetector")
-                    if cd then
-                        pcall(fireclickdetector, cd)
-                    end
-
-                    -- Fallback: TouchInterest (pukul via sentuhan)
-                    local ti = obj:FindFirstChild("TouchInterest")
-                    if ti then
-                        pcall(firetouchinterest, hrp, obj, 0)
-                        task.wait(0.02)
-                        pcall(firetouchinterest, hrp, obj, 1)
-                    end
-
-                    task.wait(0.05)
+                if not isChar then
+                    table.insert(targets, obj)
                 end
             end
+        end
+
+        for _, obj in ipairs(targets) do
+            if not state.autoClearWorld then break end
+            if not obj or not obj.Parent then continue end
+
+            -- Teleport karakter ke depan block
+            pcall(function()
+                hrp.CFrame = CFrame.new(obj.Position + Vector3.new(0, 0, 2))
+            end)
+
+            -- 1. Fire remote jika ada
+            if breakRemote then
+                pcall(function()
+                    if breakRemote:IsA("RemoteEvent") then
+                        breakRemote:FireServer(obj, obj.Position)
+                    elseif breakRemote:IsA("RemoteFunction") then
+                        breakRemote:InvokeServer(obj, obj.Position)
+                    end
+                end)
+            end
+
+            -- 2. Fallback ClickDetector
+            local cd = obj:FindFirstChildWhichIsA("ClickDetector")
+            if cd then pcall(fireclickdetector, cd) end
+
+            -- 3. Fallback TouchInterest (sentuh dari dua sisi)
+            local ti = obj:FindFirstChild("TouchInterest")
+            if ti then
+                pcall(firetouchinterest, hrp, obj, 0)
+                task.wait(0.02)
+                pcall(firetouchinterest, hrp, obj, 1)
+            end
+
+            task.wait(0.08)
         end
     end
 end)
 
--- ── Loop: Auto Collect Floating Items ────────────────────────
+-- ============================================================
+-- LOOP: Auto Collect Floating Items
+-- ============================================================
 spawn(function()
     while true do
-        task.wait(0.2)
+        task.wait(0.15)
 
-        if state.autoCollect and hrp and character then
-            for _, obj in ipairs(Workspace:GetDescendants()) do
-                if not state.autoCollect then break end
+        if not state.autoCollect then continue end
+        if not character or not hrp then continue end
 
-                -- Deteksi item drop berdasarkan nama umum
-                local name = obj.Name:lower()
-                local isItem = obj:IsA("BasePart")
-                    and not obj:IsDescendantOf(character)
-                    and (
-                        name:find("drop")   or
-                        name:find("item")   or
-                        name:find("pickup") or
-                        name:find("gem")    or
-                        name:find("coin")   or
-                        name:find("seed")   or
-                        name:find("float")  or
-                        name:find("reward") or
-                        name:find("block")  or
-                        name:find("loot")
-                    )
+        local collectRemote = findRemote(
+            "CollectItem","collectItem","PickupItem","pickupItem",
+            "Collect","collect","PickUp","pickup",
+            "GrabItem","grabItem","TouchItem"
+        )
 
-                if isItem then
-                    local dist = (obj.Position - hrp.Position).Magnitude
-                    if dist < 300 then
-                        -- Teleport ke posisi item
+        -- Scan item drop: cari BasePart yang bukan karakter, bukan block world,
+        -- dan kemungkinan adalah floating drop
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if not state.autoCollect then break end
+            if not obj or not obj.Parent then continue end
+
+            -- Harus BasePart
+            if not obj:IsA("BasePart") then continue end
+
+            -- Jangan ambil block dunia atau bagian karakter
+            if BLOCK_WHITELIST[obj.Name] then continue end
+            if PART_BLACKLIST[obj.Name] then continue end
+
+            -- Cek apakah milik karakter
+            local isChar = false
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr.Character and obj:IsDescendantOf(plr.Character) then
+                    isChar = true; break
+                end
+            end
+            if isChar then continue end
+
+            -- Item drop biasanya kecil (size < 3 di semua axis) dan tidak locked
+            local sz = obj.Size
+            local isSmall = sz.X <= 3 and sz.Y <= 3 and sz.Z <= 3
+
+            -- Juga cek nama: item drop di Craft A World biasanya
+            -- berupa nama block (misal "Dirt", "Stone") yang melayang
+            -- atau bernama "Drop", "Item", "Gem", dll.
+            local n = obj.Name:lower()
+            local looksLikeDrop = isSmall and (
+                n:find("drop")   or n:find("item")   or
+                n:find("pickup") or n:find("gem")    or
+                n:find("coin")   or n:find("reward") or
+                n:find("loot")   or n:find("collect") or
+                -- Block yang melayang setelah di-break (nama block = nama item)
+                BLOCK_WHITELIST[obj.Name]
+            )
+
+            if looksLikeDrop then
+                local dist = (obj.Position - hrp.Position).Magnitude
+
+                -- Hanya ambil yang dalam radius 250 stud
+                if dist < 250 then
+                    -- Teleport ke posisi item
+                    pcall(function()
                         hrp.CFrame = CFrame.new(obj.Position + Vector3.new(0, 2, 0))
-                        task.wait(0.08)
+                    end)
+                    task.wait(0.08)
 
-                        -- Coba fire remote collect
-                        local function tryCollect(remoteName)
-                            for _, folder in ipairs({ "Events", "RemoteEvents", "Remotes", "RE", "events" }) do
-                                local f = ReplicatedStorage:FindFirstChild(folder)
-                                if f then
-                                    local r = f:FindFirstChild(remoteName)
-                                    if r and r:IsA("RemoteEvent") then
-                                        pcall(function() r:FireServer(obj) end)
-                                        return true
-                                    end
-                                end
-                            end
-                            return false
-                        end
+                    -- Fire collect remote
+                    if collectRemote then
+                        pcall(function()
+                            collectRemote:FireServer(obj)
+                        end)
+                    end
 
-                        tryCollect("CollectItem")
-                        tryCollect("collectItem")
-                        tryCollect("PickupItem")
-                        tryCollect("Collect")
-                        tryCollect("PickUp")
+                    -- TouchInterest — cara paling reliable untuk collect di Roblox
+                    local ti = obj:FindFirstChild("TouchInterest")
+                    if ti then
+                        pcall(firetouchinterest, hrp, obj, 0)
+                        task.wait(0.04)
+                        pcall(firetouchinterest, hrp, obj, 1)
+                    end
 
-                        -- Fallback TouchInterest
-                        local ti = obj:FindFirstChild("TouchInterest")
-                        if ti then
-                            pcall(firetouchinterest, hrp, obj, 0)
-                            task.wait(0.05)
-                            pcall(firetouchinterest, hrp, obj, 1)
+                    -- Coba juga parent-nya (model container)
+                    if obj.Parent and obj.Parent:IsA("Model") then
+                        local pti = obj.Parent.PrimaryPart
+                            and obj.Parent.PrimaryPart:FindFirstChild("TouchInterest")
+                        if pti then
+                            pcall(firetouchinterest, hrp, obj.Parent.PrimaryPart, 0)
+                            task.wait(0.04)
+                            pcall(firetouchinterest, hrp, obj.Parent.PrimaryPart, 1)
                         end
                     end
                 end
@@ -315,7 +487,7 @@ end)
 Window:SelectTab(1)
 
 Fluent:Notify({
-    Title    = "Craft A World Script",
-    Content  = "Loaded! Scan world dulu sebelum auto clear.",
+    Title    = "Craft A World Script v1.1",
+    Content  = "Loaded! Masuk ke world dulu, lalu tekan Scan.",
     Duration = 5
 })
