@@ -549,7 +549,151 @@ local function StopLogger()
 end
 
 -- =====================================================
--- BAGIAN 11: CUSTOM GUI DESIGN (ShieldTeam Style)
+-- BAGIAN 11: TRADING SYSTEM
+-- =====================================================
+local TradeState = {
+    TargetPlayer = nil,
+    PlayerList = {},
+    Inventory = {},
+    StoneInventory = {},
+    ByName = { Active = false, ItemName = nil, Amount = 1, Sent = 0 },
+    ByCoin = { Active = false, TargetCoins = 0, Sent = 0 },
+    ByRarity = { Active = false, Rarity = nil, RarityTier = nil, Amount = 1, Sent = 0 },
+    ByStone = { Active = false, StoneName = nil, Amount = 1, Sent = 0 },
+}
+
+local STONE_LIST = { "Enchant Stone", "Evolved Stone" }
+
+local function LoadInventory()
+    TradeState.Inventory = {}
+    TradeState.StoneInventory = {}
+    pcall(function()
+        local inv = PlayerData:Get("Inventory")
+        if not inv then return end
+        local items = inv.Items or inv
+        if typeof(items) ~= "table" then return end
+        for _, item in pairs(items) do
+            if typeof(item) == "table" then
+                local name = nil
+                if item.Id and FishDB[item.Id] then
+                    name = FishDB[item.Id].Name
+                elseif item.Name then
+                    name = tostring(item.Name)
+                end
+                if name then
+                    local isStone = false
+                    for _, sName in ipairs(STONE_LIST) do
+                        if string.lower(name) == string.lower(sName) then
+                            isStone = true
+                            TradeState.StoneInventory[sName] = (TradeState.StoneInventory[sName] or 0) + 1
+                            break
+                        end
+                    end
+                    if not isStone then
+                        TradeState.Inventory[name] = (TradeState.Inventory[name] or 0) + 1
+                    end
+                end
+            end
+        end
+    end)
+end
+
+local function GetInventoryItemNames()
+    local names = {}
+    for name, _ in pairs(TradeState.Inventory) do
+        table.insert(names, name)
+    end
+    table.sort(names)
+    if #names == 0 then names = {"(Inventory kosong)"} end
+    return names
+end
+
+local function GetFishNamesByRarity(tier)
+    local names = {}
+    for _, fishData in pairs(FishDB) do
+        if fishData.Tier == tier then
+            table.insert(names, fishData.Name)
+        end
+    end
+    return names
+end
+
+local TradeRemote = nil
+local function GetTradeRemote()
+    if TradeRemote then return TradeRemote end
+    pcall(function()
+        local candidates = {"RE/TradeRequest", "RE/SendTrade", "RE/InitiateTrade", "RE/Trade", "TradeRequest", "SendTrade"}
+        for _, name in ipairs(candidates) do
+            local r = net:FindFirstChild(name)
+            if r and r:IsA("RemoteEvent") then
+                TradeRemote = r
+                return
+            end
+        end
+        for _, child in pairs(net:GetDescendants()) do
+            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                if string.lower(child.Name):find("trade") then
+                    TradeRemote = child
+                    return
+                end
+            end
+        end
+    end)
+    return TradeRemote
+end
+
+local function FireTradeItem(targetUsername, itemName, quantity)
+    quantity = quantity or 1
+    local remote = GetTradeRemote()
+    local targetPlayer = nil
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Name == targetUsername or p.DisplayName == targetUsername then
+            targetPlayer = p
+            break
+        end
+    end
+    if not targetPlayer then return false end
+    local fishId = FishNameToId[itemName] or FishNameToId[string.lower(itemName)]
+    local ok = false
+    pcall(function()
+        if remote then
+            if remote:IsA("RemoteEvent") then
+                remote:FireServer(targetPlayer, fishId or itemName, quantity)
+                ok = true
+            elseif remote:IsA("RemoteFunction") then
+                remote:InvokeServer(targetPlayer, fishId or itemName, quantity)
+                ok = true
+            end
+        end
+    end)
+    return ok
+end
+
+-- =====================================================
+-- BAGIAN 12: TELEPORT LOCATIONS
+-- =====================================================
+local TeleportLocations = {
+    { Name = "Spawn", Position = Vector3.new(0, 50, 0) },
+    { Name = "Shop", Position = Vector3.new(100, 50, 100) },
+    { Name = "Fishing Spot 1", Position = Vector3.new(-200, 50, 150) },
+    { Name = "Fishing Spot 2", Position = Vector3.new(300, 50, -100) },
+    { Name = "Secret Area", Position = Vector3.new(-500, 100, 500) },
+}
+
+local function TeleportTo(position)
+    pcall(function()
+        local character = LocalPlayer.Character
+        if character then
+            local hrp = character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(position)
+            end
+        end
+    end)
+end
+
+-- =====================================================
+-- BAGIAN 13: CUSTOM GUI DESIGN (ShieldTeam Style)
 -- =====================================================
 
 -- Color Palette
@@ -571,19 +715,6 @@ local Colors = {
     Error = Color3.fromRGB(239, 68, 68),
     Toggle = Color3.fromRGB(59, 130, 246),
     ToggleOff = Color3.fromRGB(75, 85, 99),
-}
-
--- Icons (using text-based icons for compatibility)
-local Icons = {
-    Info = "ℹ️",
-    Fishing = "🎣",
-    Teleport = "📍",
-    Webhook = "🔗",
-    Settings = "⚙️",
-    Close = "✕",
-    Minimize = "—",
-    Dropdown = "▼",
-    Check = "✓",
 }
 
 -- Create Main ScreenGui
@@ -611,120 +742,26 @@ MainStroke.Color = Colors.Border
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
--- Title Bar
-local TitleBar = Instance.new("Frame")
-TitleBar.Name = "TitleBar"
-TitleBar.Size = UDim2.new(1, 0, 0, 45)
-TitleBar.BackgroundColor3 = Colors.Background
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = MainFrame
+-- Dragging functionality
+local dragging, dragInput, dragStart, startPos
 
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 12)
-TitleCorner.Parent = TitleBar
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
 
--- Fix corner for title bar (only top corners rounded)
-local TitleFix = Instance.new("Frame")
-TitleFix.Name = "TitleFix"
-TitleFix.Size = UDim2.new(1, 0, 0, 15)
-TitleFix.Position = UDim2.new(0, 0, 1, -15)
-TitleFix.BackgroundColor3 = Colors.Background
-TitleFix.BorderSizePixel = 0
-TitleFix.Parent = TitleBar
+MainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
 
--- Title Text
-local TitleText = Instance.new("TextLabel")
-TitleText.Name = "TitleText"
-TitleText.Size = UDim2.new(1, -100, 1, 0)
-TitleText.Position = UDim2.new(0, 15, 0, 0)
-TitleText.BackgroundTransparency = 1
-TitleText.Text = "Vechnost"
-TitleText.TextColor3 = Colors.Text
-TitleText.TextSize = 18
-TitleText.Font = Enum.Font.GothamBold
-TitleText.TextXAlignment = Enum.TextXAlignment.Left
-TitleText.Parent = TitleBar
-
--- Window Controls
-local ControlsFrame = Instance.new("Frame")
-ControlsFrame.Name = "Controls"
-ControlsFrame.Size = UDim2.new(0, 70, 0, 30)
-ControlsFrame.Position = UDim2.new(1, -80, 0, 8)
-ControlsFrame.BackgroundTransparency = 1
-ControlsFrame.Parent = TitleBar
-
-local MinimizeBtn = Instance.new("TextButton")
-MinimizeBtn.Name = "Minimize"
-MinimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-MinimizeBtn.Position = UDim2.new(0, 0, 0, 0)
-MinimizeBtn.BackgroundColor3 = Colors.ContentItem
-MinimizeBtn.Text = Icons.Minimize
-MinimizeBtn.TextColor3 = Colors.TextSecondary
-MinimizeBtn.TextSize = 16
-MinimizeBtn.Font = Enum.Font.GothamBold
-MinimizeBtn.Parent = ControlsFrame
-
-local MinCorner = Instance.new("UICorner")
-MinCorner.CornerRadius = UDim.new(0, 6)
-MinCorner.Parent = MinimizeBtn
-
-local CloseBtn = Instance.new("TextButton")
-CloseBtn.Name = "Close"
-CloseBtn.Size = UDim2.new(0, 30, 0, 30)
-CloseBtn.Position = UDim2.new(0, 35, 0, 0)
-CloseBtn.BackgroundColor3 = Colors.ContentItem
-CloseBtn.Text = Icons.Close
-CloseBtn.TextColor3 = Colors.TextSecondary
-CloseBtn.TextSize = 14
-CloseBtn.Font = Enum.Font.GothamBold
-CloseBtn.Parent = ControlsFrame
-
-local CloseCorner = Instance.new("UICorner")
-CloseCorner.CornerRadius = UDim.new(0, 6)
-CloseCorner.Parent = CloseBtn
-
--- Sidebar
-local Sidebar = Instance.new("Frame")
-Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 180, 1, -45)
-Sidebar.Position = UDim2.new(0, 0, 0, 45)
-Sidebar.BackgroundColor3 = Colors.Sidebar
-Sidebar.BorderSizePixel = 0
-Sidebar.Parent = MainFrame
-
-local SidebarCorner = Instance.new("UICorner")
-SidebarCorner.CornerRadius = UDim.new(0, 12)
-SidebarCorner.Parent = Sidebar
-
--- Fix sidebar corner (only bottom-left rounded)
-local SidebarFix = Instance.new("Frame")
-SidebarFix.Name = "SidebarFix"
-SidebarFix.Size = UDim2.new(1, 0, 0, 20)
-SidebarFix.Position = UDim2.new(0, 0, 0, 0)
-SidebarFix.BackgroundColor3 = Colors.Sidebar
-SidebarFix.BorderSizePixel = 0
-SidebarFix.Parent = Sidebar
-
-local SidebarFix2 = Instance.new("Frame")
-SidebarFix2.Name = "SidebarFix2"
-SidebarFix2.Size = UDim2.new(0, 20, 1, 0)
-SidebarFix2.Position = UDim2.new(1, -20, 0, 0)
-SidebarFix2.BackgroundColor3 = Colors.Sidebar
-SidebarFix2.BorderSizePixel = 0
-SidebarFix2.Parent = Sidebar
-
--- Sidebar Tabs Container
-local TabsContainer = Instance.new("Frame")
-TabsContainer.Name = "TabsContainer"
-TabsContainer.Size = UDim2.new(1, -10, 1, -20)
-TabsContainer.Position = UDim2.new(0, 5, 0, 10)
-TabsContainer.BackgroundTransparency = 1
-TabsContainer.Parent = Sidebar
-
-local TabsLayout = Instance.new("UIListLayout")
-TabsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-TabsLayout.Padding = UDim.new(0, 5)
-TabsLayout.Parent = TabsContainer
-
--- Content Area
-local ContentArea = Instance.new("Frame")
+UserInputService.InputChanged:Connect(function(input)
