@@ -2,8 +2,8 @@
     FILE: vechnost_v2.lua
     BRAND: Vechnost
     VERSION: 2.0.0
-    DESC: Server-Wide Fish Webhook Logger + Auto Trading System for Roblox "Fish It"
-          Custom GUI Design - ShieldTeam Style
+    DESC: Server-Wide Fish Webhook Logger + Auto Trading System
+          Custom GUI Design (ShieldTeam Style)
 ]]
 
 -- =====================================================
@@ -447,7 +447,7 @@ end
 
 local function StartLogger()
     if Settings.Active then return end
-    if not net or not ObtainedNewFish then return end
+    if not net or not ObtainedNewFish then return false end
 
     Settings.Active = true
     Settings.SentUUID = {}
@@ -538,6 +538,8 @@ local function StartLogger()
         local mode = Settings.ServerWide and "Server Notifier" or "Local Only"
         SendWebhook(BuildActivationPayload(LocalPlayer.Name, mode))
     end)
+    
+    return true
 end
 
 local function StopLogger()
@@ -549,135 +551,17 @@ local function StopLogger()
 end
 
 -- =====================================================
--- BAGIAN 11: TRADING SYSTEM
--- =====================================================
-local TradeState = {
-    TargetPlayer = nil,
-    PlayerList = {},
-    Inventory = {},
-    StoneInventory = {},
-    ByName = { Active = false, ItemName = nil, Amount = 1, Sent = 0 },
-    ByCoin = { Active = false, TargetCoins = 0, Sent = 0 },
-    ByRarity = { Active = false, Rarity = nil, RarityTier = nil, Amount = 1, Sent = 0 },
-    ByStone = { Active = false, StoneName = nil, Amount = 1, Sent = 0 },
-}
-
-local STONE_LIST = { "Enchant Stone", "Evolved Stone" }
-
-local function LoadInventory()
-    TradeState.Inventory = {}
-    TradeState.StoneInventory = {}
-    pcall(function()
-        local inv = PlayerData:Get("Inventory")
-        if not inv then return end
-        local items = inv.Items or inv
-        if typeof(items) ~= "table" then return end
-        for _, item in pairs(items) do
-            if typeof(item) == "table" then
-                local name = nil
-                if item.Id and FishDB[item.Id] then
-                    name = FishDB[item.Id].Name
-                elseif item.Name then
-                    name = tostring(item.Name)
-                end
-                if name then
-                    local isStone = false
-                    for _, sName in ipairs(STONE_LIST) do
-                        if string.lower(name) == string.lower(sName) then
-                            isStone = true
-                            TradeState.StoneInventory[sName] = (TradeState.StoneInventory[sName] or 0) + 1
-                            break
-                        end
-                    end
-                    if not isStone then
-                        TradeState.Inventory[name] = (TradeState.Inventory[name] or 0) + 1
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function GetInventoryItemNames()
-    local names = {}
-    for name, _ in pairs(TradeState.Inventory) do
-        table.insert(names, name)
-    end
-    table.sort(names)
-    if #names == 0 then names = {"(Inventory kosong)"} end
-    return names
-end
-
-local function GetFishNamesByRarity(tier)
-    local names = {}
-    for _, fishData in pairs(FishDB) do
-        if fishData.Tier == tier then
-            table.insert(names, fishData.Name)
-        end
-    end
-    return names
-end
-
-local TradeRemote = nil
-local function GetTradeRemote()
-    if TradeRemote then return TradeRemote end
-    pcall(function()
-        local candidates = {"RE/TradeRequest", "RE/SendTrade", "RE/InitiateTrade", "RE/Trade", "TradeRequest", "SendTrade"}
-        for _, name in ipairs(candidates) do
-            local r = net:FindFirstChild(name)
-            if r and r:IsA("RemoteEvent") then
-                TradeRemote = r
-                return
-            end
-        end
-        for _, child in pairs(net:GetDescendants()) do
-            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
-                if string.lower(child.Name):find("trade") then
-                    TradeRemote = child
-                    return
-                end
-            end
-        end
-    end)
-    return TradeRemote
-end
-
-local function FireTradeItem(targetUsername, itemName, quantity)
-    quantity = quantity or 1
-    local remote = GetTradeRemote()
-    local targetPlayer = nil
-    for _, p in pairs(Players:GetPlayers()) do
-        if p.Name == targetUsername or p.DisplayName == targetUsername then
-            targetPlayer = p
-            break
-        end
-    end
-    if not targetPlayer then return false end
-    local fishId = FishNameToId[itemName] or FishNameToId[string.lower(itemName)]
-    local ok = false
-    pcall(function()
-        if remote then
-            if remote:IsA("RemoteEvent") then
-                remote:FireServer(targetPlayer, fishId or itemName, quantity)
-                ok = true
-            elseif remote:IsA("RemoteFunction") then
-                remote:InvokeServer(targetPlayer, fishId or itemName, quantity)
-                ok = true
-            end
-        end
-    end)
-    return ok
-end
-
--- =====================================================
--- BAGIAN 12: TELEPORT LOCATIONS
+-- BAGIAN 11: TELEPORT LOCATIONS
 -- =====================================================
 local TeleportLocations = {
     { Name = "Spawn", Position = Vector3.new(0, 50, 0) },
     { Name = "Shop", Position = Vector3.new(100, 50, 100) },
-    { Name = "Fishing Spot 1", Position = Vector3.new(-200, 50, 150) },
-    { Name = "Fishing Spot 2", Position = Vector3.new(300, 50, -100) },
-    { Name = "Secret Area", Position = Vector3.new(-500, 100, 500) },
+    { Name = "Moosewood", Position = Vector3.new(-200, 50, 150) },
+    { Name = "Roslit Bay", Position = Vector3.new(300, 50, -100) },
+    { Name = "Mushgrove Swamp", Position = Vector3.new(-500, 100, 500) },
+    { Name = "Terrapin Island", Position = Vector3.new(800, 50, 200) },
+    { Name = "Sunstone Island", Position = Vector3.new(-300, 80, -400) },
+    { Name = "Forsaken Shores", Position = Vector3.new(600, 60, -600) },
 }
 
 local function TeleportTo(position)
@@ -693,48 +577,52 @@ local function TeleportTo(position)
 end
 
 -- =====================================================
--- BAGIAN 13: CUSTOM GUI DESIGN (ShieldTeam Style)
+-- BAGIAN 12: CUSTOM GUI - COLOR PALETTE
 -- =====================================================
-
--- Color Palette
 local Colors = {
-    Background = Color3.fromRGB(15, 17, 26),
-    Sidebar = Color3.fromRGB(20, 22, 35),
-    SidebarHover = Color3.fromRGB(30, 35, 55),
-    SidebarActive = Color3.fromRGB(35, 40, 65),
-    Content = Color3.fromRGB(25, 28, 42),
-    ContentItem = Color3.fromRGB(32, 36, 55),
-    ContentItemHover = Color3.fromRGB(40, 45, 70),
+    Background = Color3.fromRGB(13, 17, 28),
+    Sidebar = Color3.fromRGB(18, 22, 36),
+    SidebarItem = Color3.fromRGB(24, 28, 45),
+    SidebarItemHover = Color3.fromRGB(32, 38, 60),
+    SidebarItemActive = Color3.fromRGB(40, 50, 80),
+    Content = Color3.fromRGB(20, 24, 38),
+    ContentItem = Color3.fromRGB(28, 33, 52),
+    ContentItemHover = Color3.fromRGB(35, 42, 65),
     Accent = Color3.fromRGB(59, 130, 246),
-    AccentHover = Color3.fromRGB(96, 165, 250),
+    AccentDark = Color3.fromRGB(37, 99, 235),
     Text = Color3.fromRGB(255, 255, 255),
     TextSecondary = Color3.fromRGB(156, 163, 175),
     TextMuted = Color3.fromRGB(107, 114, 128),
     Border = Color3.fromRGB(55, 65, 81),
     Success = Color3.fromRGB(34, 197, 94),
     Error = Color3.fromRGB(239, 68, 68),
-    Toggle = Color3.fromRGB(59, 130, 246),
+    ToggleOn = Color3.fromRGB(59, 130, 246),
     ToggleOff = Color3.fromRGB(75, 85, 99),
 }
 
--- Create Main ScreenGui
+-- =====================================================
+-- BAGIAN 13: CUSTOM GUI - MAIN STRUCTURE
+-- =====================================================
+
+-- Create ScreenGui
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAMES.Main
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = CoreGui
 
--- Main Container
+-- Main Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 700, 0, 450)
-MainFrame.Position = UDim2.new(0.5, -350, 0.5, -225)
+MainFrame.Size = UDim2.new(0, 750, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -375, 0.5, -240)
 MainFrame.BackgroundColor3 = Colors.Background
 MainFrame.BorderSizePixel = 0
+MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
 local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.CornerRadius = UDim.new(0, 10)
 MainCorner.Parent = MainFrame
 
 local MainStroke = Instance.new("UIStroke")
@@ -742,8 +630,13 @@ MainStroke.Color = Colors.Border
 MainStroke.Thickness = 1
 MainStroke.Parent = MainFrame
 
--- Dragging functionality
+-- Dragging
 local dragging, dragInput, dragStart, startPos
+
+local function updateDrag(input)
+    local delta = input.Position - dragStart
+    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+end
 
 MainFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -765,3 +658,71 @@ MainFrame.InputChanged:Connect(function(input)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        updateDrag(input)
+    end
+end)
+
+-- =====================================================
+-- BAGIAN 14: TITLE BAR
+-- =====================================================
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 50)
+TitleBar.BackgroundColor3 = Colors.Background
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Name = "Title"
+TitleText.Size = UDim2.new(1, -120, 1, 0)
+TitleText.Position = UDim2.new(0, 20, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "Vechnost"
+TitleText.TextColor3 = Colors.Text
+TitleText.TextSize = 20
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+-- Window Controls
+local ControlsFrame = Instance.new("Frame")
+ControlsFrame.Name = "Controls"
+ControlsFrame.Size = UDim2.new(0, 80, 0, 35)
+ControlsFrame.Position = UDim2.new(1, -95, 0, 8)
+ControlsFrame.BackgroundTransparency = 1
+ControlsFrame.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Name = "Minimize"
+MinimizeBtn.Size = UDim2.new(0, 35, 0, 35)
+MinimizeBtn.Position = UDim2.new(0, 0, 0, 0)
+MinimizeBtn.BackgroundColor3 = Colors.ContentItem
+MinimizeBtn.Text = "—"
+MinimizeBtn.TextColor3 = Colors.TextSecondary
+MinimizeBtn.TextSize = 18
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.AutoButtonColor = false
+MinimizeBtn.Parent = ControlsFrame
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 8)
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "Close"
+CloseBtn.Size = UDim2.new(0, 35, 0, 35)
+CloseBtn.Position = UDim2.new(0, 40, 0, 0)
+CloseBtn.BackgroundColor3 = Colors.ContentItem
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Colors.TextSecondary
+CloseBtn.TextSize = 14
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.AutoButtonColor = false
+CloseBtn.Parent = ControlsFrame
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 8)
+
+-- Button hover effects
+local function AddHoverEffect(btn, normalColor, hoverColor)
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = hoverColor}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn,
