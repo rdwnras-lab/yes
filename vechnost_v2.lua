@@ -1,1077 +1,1722 @@
---[[
-    Vechnost Hub v2.2
-    Game  : Fish It (Roblox)
-    Anti-detect fixes vs CODE-BAC-6225 / CODE-BAC-61910:
-      1. Rayfield GUI diprotect via syn.protect_gui / protect_gui / gethui()
-         sehingga tidak masuk CoreGui yang di-scan Fish It
-      2. Semua warn() dihilangkan agar console tidak bisa di-fingerprint
-      3. HttpGet Rayfield diberi delay 1 detik agar tidak langsung terpantau
-      4. Variabel/nama tidak mengandung kata mencurigakan (exploit, hack, dll)
-      5. Teleport step-based + delay random
-      6. WalkSpeed dibaca palsu via hookmetamethod (jika executor support)
-      7. Anti-AFK interval random
-      8. Floating button pakai gethui() bukan CoreGui langsung
+--[[ 
+    FILE: vechnost_webhook.lua
+    BRAND: Vechnost
+    VERSION: 1.0.0
+    DESC: Server-Wide Fish Webhook Logger for Roblox "Fish It"
+          Logs fish catches from ALL players in the server
+          Sends rich notifications to Discord via Webhook
 ]]
 
--- ============================================================
--- 0. ANTI-DETECT: hookmetamethod spoof WalkSpeed/JumpPower
---    Jika executor support hookmetamethod, server akan baca nilai normal
---    meski kita set berbeda di client
--- ============================================================
-local _plr   = game:GetService("Players").LocalPlayer
-local _spoofSpeed  = 16
-local _spoofJump   = 50
-
-pcall(function()
-    if not hookmetamethod then return end
-    local _mt   = getrawmetatable(game)
-    local _old  = _mt.__index
-    setreadonly(_mt, false)
-    _mt.__index = newcclosure(function(self, prop)
-        if not checkcaller() then
-            if typeof(self) == "Instance" and self.ClassName == "Humanoid" then
-                if prop == "WalkSpeed" then return _spoofSpeed end
-                if prop == "JumpPower" then return _spoofJump  end
-            end
-        end
-        return _old(self, prop)
-    end)
-    setreadonly(_mt, true)
-end)
-
--- ============================================================
--- 1. CLEANUP residual GUIs dari run sebelumnya
--- ============================================================
-local _cg = game:GetService("CoreGui")
-local _TAG = "V_Hub_222"
-local _FTAG= "V_Flt_222"
-
-pcall(function()
-    for _, v in pairs(_cg:GetChildren()) do
-        if v.Name == _TAG or v.Name == _FTAG then v:Destroy() end
-    end
-end)
--- Coba gethui() juga
-pcall(function()
-    for _, v in pairs(gethui():GetChildren()) do
-        if v.Name == _TAG or v.Name == _FTAG then v:Destroy() end
-    end
-end)
-
--- ============================================================
--- 2. SERVICES
--- ============================================================
-local Players          = game:GetService("Players")
-local RS               = game:GetService("ReplicatedStorage")
-local Http             = game:GetService("HttpService")
-local Run              = game:GetService("RunService")
-local UIS              = game:GetService("UserInputService")
-local TS               = game:GetService("TweenService")
-local WS               = game:GetService("Workspace")
-local TCS              = game:GetService("TextChatService")
-
-local LP   = Players.LocalPlayer
-local PGui = LP:WaitForChild("PlayerGui")
-
--- HttpRequest
-local HR =
-    (syn        and syn.request)        or
-    http_request                        or
-    request                             or
-    (fluxus     and fluxus.request)     or
-    (krnl       and krnl.request)
-
--- VirtualInputManager (aman karena bukan RemoteEvent)
-local VIM = pcall(function() return game:GetService("VirtualInputManager") end)
-pcall(function() VIM = game:GetService("VirtualInputManager") end)
-
--- ============================================================
--- 3. LOAD RAYFIELD — delay 1 detik + protect_gui
--- ============================================================
-task.wait(1) -- delay sebelum HttpGet agar tidak langsung terpantau
-
-local Rayfield
-do
-    local ok, res = pcall(function()
-        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-    end)
-    if not ok or not res then return end
-    Rayfield = res
-    -- Protect GUI dari CoreGui scan anti-cheat
-    pcall(function()
-        if syn and syn.protect_gui then
-            for _, gui in pairs(_cg:GetChildren()) do
-                if gui:IsA("ScreenGui") and gui.Name:lower():find("rayfield") then
-                    syn.protect_gui(gui)
-                    gui.Parent = _cg
-                end
-            end
-        elseif protect_gui then
-            for _, gui in pairs(_cg:GetChildren()) do
-                if gui:IsA("ScreenGui") and gui.Name:lower():find("rayfield") then
-                    protect_gui(gui)
-                    gui.Parent = _cg
-                end
-            end
-        end
-    end)
-end
-
--- ============================================================
--- 4. GAME REMOTES (silent, no warn)
--- ============================================================
-local _net, _fishEvt
-do
-    pcall(function()
-        _net     = RS:WaitForChild("Packages", 10)
-                    :WaitForChild("_Index", 5)
-                    :WaitForChild("sleitnick_net@0.2.0", 5)
-                    :WaitForChild("net", 5)
-        _fishEvt = _net:WaitForChild("RE/ObtainedNewFishNotification", 5)
-    end)
-end
-
--- ============================================================
--- 5. SETTINGS
--- ============================================================
-local S = {
-    -- webhook
-    Active=false, Url="", SentUID={}, Rarities={}, Wide=true, Logs=0,
-    -- fish
-    AFish=false, ASell=false, FDelay=0.08, SDelay=5,
-    -- trade
-    AAccept=false, ADecline=false, TRarity=5, TLog=false,
-    -- config
-    ESP=false, AAFK=false, InfJ=false, Speed=16, Jump=50, Fog=false,
+-- =====================================================
+-- BAGIAN 1: CLEANUP SYSTEM
+-- =====================================================
+local CoreGui = game:GetService("CoreGui")
+local GUI_NAMES = {
+    Main = "Vechnost_Webhook_UI",
+    Mobile = "Vechnost_Mobile_Button",
 }
 
--- ============================================================
--- 6. FISH DATABASE
--- ============================================================
-local DB = {}
+for _, v in pairs(CoreGui:GetChildren()) do
+    for _, name in pairs(GUI_NAMES) do
+        if v.Name == name then v:Destroy() end
+    end
+end
+
+for _, v in pairs(CoreGui:GetDescendants()) do
+    if v:IsA("TextLabel") and v.Text == "Vechnost" then
+        local container = v
+        for i = 1, 10 do
+            if typeof(container) ~= "Instance" then break end
+            local parent = container.Parent
+            if not parent then break end
+            container = parent
+            if typeof(container) == "Instance" and container:IsA("ScreenGui") then
+                container:Destroy()
+                break
+            end
+        end
+    end
+end
+
+-- =====================================================
+-- BAGIAN 2: SERVICES & GLOBALS
+-- =====================================================
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Safe load game-specific remotes
+local net, ObtainedNewFish
 do
-    pcall(function()
-        local it = RS:WaitForChild("Items", 10)
-        if not it then return end
-        for _, m in ipairs(it:GetChildren()) do
-            if m:IsA("ModuleScript") then
-                local ok, mod = pcall(require, m)
-                if ok and mod and mod.Data and mod.Data.Type == "Fish" then
-                    DB[mod.Data.Id] = {
-                        N  = mod.Data.Name,
-                        T  = mod.Data.Tier,
-                        Ic = mod.Data.Icon,
-                        Sp = mod.Data.SellPrice or mod.Data.Value or mod.Data.Price or 0
+    local ok, err = pcall(function()
+        net = ReplicatedStorage:WaitForChild("Packages", 10)
+            :WaitForChild("_Index", 5)
+            :WaitForChild("sleitnick_net@0.2.0", 5)
+            :WaitForChild("net", 5)
+        ObtainedNewFish = net:WaitForChild("RE/ObtainedNewFishNotification", 5)
+    end)
+    if not ok then
+        warn("[Vechnost] ERROR loading game remotes:", err)
+        warn("[Vechnost] Make sure you are in the Fish It game!")
+    else
+        warn("[Vechnost] Game remotes loaded OK")
+    end
+end
+
+-- Safe load Rayfield
+local Rayfield
+do
+    local ok, result = pcall(function()
+        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+    end)
+    if ok and result then
+        Rayfield = result
+        warn("[Vechnost] Rayfield loaded OK")
+    else
+        warn("[Vechnost] ERROR loading Rayfield:", result)
+        return
+    end
+end
+
+-- =====================================================
+-- BAGIAN 3: SETTINGS STATE
+-- =====================================================
+local Settings = {
+    Active = false,
+    Url = "",
+    SentUUID = {},
+    SelectedRarities = {},
+    ServerWide = true,
+    LogCount = 0,
+    -- Player Logs
+    LogPlayerJoin = false,
+    LogPlayerLeave = false,
+    -- Automation
+    AutoClick = false,
+    AntiAFK = false,
+    DisablePopups = false,
+    PingMonitor = false,
+    AutoReconnect = false,
+    -- Exploits
+    InstantCatch = false,
+    AutoSellAll = false,
+}
+
+-- =====================================================
+-- BAGIAN 4: FISH DATABASE
+-- =====================================================
+local FishDB = {}
+do
+    local ok, err = pcall(function()
+        local Items = ReplicatedStorage:WaitForChild("Items", 10)
+        if not Items then return end
+        local debugOnce = true
+        for _, module in ipairs(Items:GetChildren()) do
+            if module:IsA("ModuleScript") then
+                local ok2, mod = pcall(require, module)
+                if ok2 and mod and mod.Data and mod.Data.Type == "Fish" then
+                    -- Debug: print all data keys for first fish
+                    if debugOnce then
+                        debugOnce = false
+                        warn("[Vechnost] FishDB sample keys for:", mod.Data.Name)
+                        for k, v in pairs(mod.Data) do
+                            warn("  ", k, "=", tostring(v))
+                        end
+                    end
+                    FishDB[mod.Data.Id] = {
+                        Name = mod.Data.Name,
+                        Tier = mod.Data.Tier,
+                        Icon = mod.Data.Icon,
+                        SellPrice = mod.Data.SellPrice or mod.Data.Value or mod.Data.Price or mod.Data.Worth or 0
                     }
                 end
             end
         end
     end)
+    if not ok then
+        warn("[Vechnost] ERROR loading FishDB:", err)
+    end
 end
 
-local NtoId = {}
-for id, d in pairs(DB) do
-    if d.N then NtoId[d.N]=id; NtoId[d.N:lower()]=id end
+
+-- Secret Fish Asset IDs for Fallback/Proxy Images
+local SecretFishData = {
+    ["Crystal Crab"] = 18335072046, ["Orca"] = 18335061483, ["Zombie Shark"] = 18335056722,
+    ["Zombie Megalodon"] = 18335056551, ["Dead Zombie Shark"] = 18335056722, ["Blob Shark"] = 18335068212,
+    ["Ghost Shark"] = 18335059639, ["Skeleton Narwhal"] = 18335057177, ["Ghost Worm Fish"] = 18335059511,
+    ["Worm Fish"] = 18335057406, ["Megalodon"] = 18335063073, ["1x1x1x1 Comet Shark"] = 18335068832,
+    ["Bloodmoon Whale"] = 18335067980, ["Lochness Monster"] = 18335063708, ["Monster Shark"] = 18335062145,
+    ["Eerie Shark"] = 18335060416, ["Great Whale"] = 18335058867, ["Frostborn Shark"] = 18335059957,
+    ["Armored Shark"] = 18335068417, ["Scare"] = 18335058097, ["Queen Crab"] = 18335058252,
+    ["King Crab"] = 18335064431, ["Cryoshade Glider"] = 18335066928, ["Panther Eel"] = 18335060799,
+    ["Giant Squid"] = 18335059345, ["Depthseeker Ray"] = 18335066551, ["Robot Kraken"] = 18335058448,
+    ["Mosasaur Shark"] = 18335061981, ["King Jelly"] = 18335064243, ["Bone Whale"] = 18335067645,
+    ["Elshark Gran Maja"] = 18335060241, ["Elpirate Gran Maja"] = 18335060241, ["Ancient Whale"] = 18335068612,
+    ["Gladiator Shark"] = 18335059068, ["Ancient Lochness Monster"] = 18335063708, ["Talon Serpent"] = 18335057777,
+    ["Hacker Shark"] = 18335059223, ["ElRetro Gran Maja"] = 18335060241, ["Strawberry Choc Megalodon"] = 18335063073,
+    ["Krampus Shark"] = 18335062145, ["Emerald Winter Whale"] = 18335058867, ["Winter Frost Shark"] = 18335059957,
+    ["Icebreaker Whale"] = 18335067645, ["Leviathan"] = 18335063983, ["Pirate Megalodon"] = 18335063073,
+    ["Viridis Lurker"] = 18335060799, ["Cursed Kraken"] = 18335058448, ["Ancient Magma Whale"] = 18335068612,
+    ["Rainbow Comet Shark"] = 18335118712, ["Love Nessie"] = 18335063708, ["Broken Heart Nessie"] = 18335063708
+}
+local PROXY = "https://square-haze-a007.remediashop.workers.dev"
+
+-- Build reverse lookup: Fish Name -> Fish ID (for chat parsing)
+local FishNameToId = {}
+for fishId, fishData in pairs(FishDB) do
+    if fishData.Name then
+        FishNameToId[fishData.Name] = fishId
+        FishNameToId[string.lower(fishData.Name)] = fishId
+    end
 end
+warn("[Vechnost] FishDB Loaded:", #FishNameToId > 0 and "OK" or "EMPTY")
 
--- ============================================================
--- 7. PLAYER DATA
--- ============================================================
-local PD
-pcall(function()
-    PD = require(RS.Packages.Replion).Client:WaitReplion("Data")
-end)
-
-local function Fmt(n)
-    if not n or type(n)~="number" then return "0" end
-    local s=tostring(math.floor(n)); local k
-    while true do s,k=s:gsub("^(-?%d+)(%d%d%d)","%1,%2"); if k==0 then break end end
-    return s
-end
-
-local function Stats()
-    local r={C=0,F=0,B=0,BM=0}
-    if not PD then return r end
+-- =====================================================
+-- BAGIAN 4B: REPLION PLAYER DATA (Coins, Stats, Backpack)
+-- =====================================================
+local PlayerData = nil
+do
     pcall(function()
-        for _,k in ipairs({"Coins","Currency","Money","Gold","Cash"}) do
-            local ok,v=pcall(function() return PD:Get(k) end)
-            if ok and v and type(v)=="number" then r.C=v;break end
+        local Replion = require(ReplicatedStorage.Packages.Replion)
+        PlayerData = Replion.Client:WaitReplion("Data")
+        if PlayerData then
+            warn("[Vechnost] Player Replion Data loaded OK")
         end
-        for _,k in ipairs({"TotalCaught","FishCaught","TotalFish"}) do
-            local ok,v=pcall(function() return PD:Get(k) end)
-            if ok and v and type(v)=="number" then r.F=v;break end
+    end)
+end
+
+-- Helper: Format number with commas (1234567 -> 1,234,567)
+local function FormatNumber(n)
+    if not n or type(n) ~= "number" then return "0" end
+    local formatted = tostring(math.floor(n))
+    local k
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
+    end
+    return formatted
+end
+
+-- Helper: Get player stats from Replion data (uses :Get() API)
+local _debugStatsDone = false
+local function GetPlayerStats()
+    local stats = {
+        Coins = 0,
+        TotalCaught = 0,
+        BackpackCount = 0,
+        BackpackMax = 0,
+    }
+
+    if not PlayerData then return stats end
+
+    pcall(function()
+        -- Debug: print all top-level keys on first call
+        if not _debugStatsDone then
+            _debugStatsDone = true
+            warn("[Vechnost] Replion Data top-level keys:")
+            local allData = nil
+            pcall(function()
+                if PlayerData.GetData then
+                    allData = PlayerData:GetData()
+                end
+            end)
+            if allData then
+                for k, v in pairs(allData) do
+                    local vType = typeof(v)
+                    if vType == "table" then
+                        warn("  ", k, "= [table]")
+                        for k2, v2 in pairs(v) do
+                            warn("    ", k2, "=", tostring(v2):sub(1, 80))
+                        end
+                    else
+                        warn("  ", k, "=", tostring(v))
+                    end
+                end
+            else
+                -- Try :Get() for common keys
+                for _, key in ipairs({"Coins", "Currency", "Money", "Gold", "Cash", "Inventory", "Backpack", "Stats", "FishCaught", "TotalCaught", "BackpackSize"}) do
+                    local ok, val = pcall(function() return PlayerData:Get(key) end)
+                    if ok and val ~= nil then
+                        warn("  ", key, "=", tostring(val):sub(1, 80))
+                    end
+                end
+            end
         end
+
+        -- Try :Get() API (Fish It uses Replion :Get())
+        local coinVal = nil
+        for _, key in ipairs({"Coins", "Currency", "Money", "Gold", "Cash"}) do
+            local ok, val = pcall(function() return PlayerData:Get(key) end)
+            if ok and val and type(val) == "number" then
+                coinVal = val
+                break
+            end
+        end
+        stats.Coins = coinVal or 0
+
+        -- Total caught
+        for _, key in ipairs({"TotalCaught", "FishCaught", "TotalFish"}) do
+            local ok, val = pcall(function() return PlayerData:Get(key) end)
+            if ok and val and type(val) == "number" then
+                stats.TotalCaught = val
+                break
+            end
+        end
+        -- Nested in Stats
+        if stats.TotalCaught == 0 then
+            pcall(function()
+                local s = PlayerData:Get("Stats")
+                if s and typeof(s) == "table" then
+                    stats.TotalCaught = s.TotalCaught or s.FishCaught or s.TotalFish or 0
+                end
+            end)
+        end
+
+        -- Inventory/Backpack count + max
         pcall(function()
-            local inv=PD:Get("Inventory")
-            if inv and typeof(inv)=="table" then
-                local c=0; for _ in pairs(inv.Items or inv) do c=c+1 end; r.B=c
-                r.BM=inv.Capacity or inv.Size or inv.MaxSize or inv.Max or inv.Limit or 0
+            local inv = PlayerData:Get("Inventory")
+            if inv and typeof(inv) == "table" then
+                -- Debug: print ALL inventory keys (once)
+                if not _debugStatsDone then
+                    warn("[Vechnost] Inventory table keys:")
+                    for k, v in pairs(inv) do
+                        local t = typeof(v)
+                        if t == "table" then
+                            local c = 0
+                            for _ in pairs(v) do c = c + 1 end
+                            warn("  Inv." .. tostring(k) .. " = [table:" .. c .. "]")
+                        else
+                            warn("  Inv." .. tostring(k) .. " = " .. tostring(v))
+                        end
+                    end
+                end
+                if inv.Items and typeof(inv.Items) == "table" then
+                    local count = 0
+                    for _ in pairs(inv.Items) do count = count + 1 end
+                    stats.BackpackCount = count
+                else
+                    local count = 0
+                    for _ in pairs(inv) do count = count + 1 end
+                    stats.BackpackCount = count
+                end
+                -- BackpackMax from Inventory table
+                if inv.Capacity and type(inv.Capacity) == "number" then
+                    stats.BackpackMax = inv.Capacity
+                elseif inv.Size and type(inv.Size) == "number" then
+                    stats.BackpackMax = inv.Size
+                elseif inv.MaxSize and type(inv.MaxSize) == "number" then
+                    stats.BackpackMax = inv.MaxSize
+                elseif inv.Max and type(inv.Max) == "number" then
+                    stats.BackpackMax = inv.Max
+                elseif inv.Limit and type(inv.Limit) == "number" then
+                    stats.BackpackMax = inv.Limit
+                end
             end
         end)
-    end)
-    return r
-end
 
--- ============================================================
--- 8. RARITY
--- ============================================================
-local RM = {[1]="Common",[2]="Uncommon",[3]="Rare",[4]="Epic",[5]="Legendary",[6]="Mythic",[7]="Secret"}
-local RT = {Common=1,Uncommon=2,Rare=3,Epic=4,Legendary=5,Mythic=6,Secret=7}
-local RL = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
-
-local function ROK(id)
-    local f=DB[id]; if not f then return false end
-    if next(S.Rarities)==nil then return true end
-    return S.Rarities[f.T]==true
-end
-
--- ============================================================
--- 9. TELEPORT (step-based, anti-detect)
--- ============================================================
-local function SafeTP(pos, cb)
-    local chr=LP.Character; if not chr then if cb then cb(false) end; return end
-    local hrp=chr:FindFirstChild("HumanoidRootPart"); if not hrp then if cb then cb(false) end; return end
-    local hum=chr:FindFirstChildOfClass("Humanoid")
-    if hum then hum.WalkSpeed=0 end
-    local s=hrp.Position
-    task.spawn(function()
-        for i=1,4 do
-            task.wait(0.04+math.random()*0.03)
-            pcall(function() hrp.CFrame=CFrame.new(s+(pos-s)*(i/4)) end)
+        -- Backpack max from top-level keys
+        if stats.BackpackMax == 0 then
+            for _, key in ipairs({"BackpackSize", "MaxBackpack", "BackpackMax", "InventorySize", "MaxInventory", "InventoryCapacity"}) do
+                local ok, val = pcall(function() return PlayerData:Get(key) end)
+                if ok and val and type(val) == "number" and val > 0 then
+                    stats.BackpackMax = val
+                    break
+                end
+            end
         end
-        task.wait(0.1)
-        if hum then hum.WalkSpeed=S.Speed end
-        if cb then cb(true) end
+        -- Nested in Upgrades
+        if stats.BackpackMax == 0 then
+            pcall(function()
+                local u = PlayerData:Get("Upgrades")
+                if u and typeof(u) == "table" then
+                    stats.BackpackMax = u.BackpackSize or u.Backpack or u.InventorySize or u.Capacity or 0
+                end
+            end)
+        end
+
+        -- Scan PlayerGui for backpack label (e.g. "914 / 4500")
+        if stats.BackpackMax == 0 then
+            pcall(function()
+                local function scanGui(parent)
+                    for _, child in ipairs(parent:GetDescendants()) do
+                        if (child:IsA("TextLabel") or child:IsA("TextButton")) and child.Text then
+                            local cur, mx = string.match(child.Text, "(%d+)%s*/%s*(%d+)")
+                            if cur and mx then
+                                local maxNum = tonumber(mx)
+                                if maxNum and maxNum >= 100 then
+                                    stats.BackpackMax = maxNum
+                                    return true
+                                end
+                            end
+                        end
+                    end
+                    return false
+                end
+                local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+                if pg then scanGui(pg) end
+            end)
+        end
+
+        -- TotalCaught fallback: count Inventory items if no direct field
+        if stats.TotalCaught == 0 and stats.BackpackCount > 0 then
+            stats.TotalCaught = stats.BackpackCount
+        end
+    end)
+
+    return stats
+end
+
+-- =====================================================
+-- BAGIAN 5: RARITY SYSTEM
+-- =====================================================
+local RARITY_MAP = {
+    [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic",
+    [5] = "Legendary", [6] = "Mythic", [7] = "Secret",
+}
+
+local RARITY_NAME_TO_TIER = {
+    Common = 1, Uncommon = 2, Rare = 3, Epic = 4,
+    Legendary = 5, Mythic = 6, Secret = 7,
+}
+
+local RARITY_COLOR = {
+    [1] = 0x9e9e9e, [2] = 0x4caf50, [3] = 0x2196f3, [4] = 0x9c27b0,
+    [5] = 0xff9800, [6] = 0xf44336, [7] = 0xff1744,
+    [8] = 0x00e5ff, [9] = 0x448aff,
+}
+
+local RARITY_EMOJI = {
+    [1] = "⬜", [2] = "🟩", [3] = "🟦", [4] = "🟪",
+    [5] = "🟧", [6] = "🟥", [7] = "⬛", [8] = "🔷", [9] = "💠",
+}
+
+local RarityList = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
+
+-- =====================================================
+-- BAGIAN 6: HTTP REQUEST (Executor Compatible)
+-- =====================================================
+local HttpRequest =
+    syn and syn.request
+    or http_request
+    or request
+    or (fluxus and fluxus.request)
+    or (krnl and krnl.request)
+
+if not HttpRequest then
+    warn("[Vechnost][FATAL] HttpRequest not available in this executor")
+end
+
+-- =====================================================
+-- BAGIAN 7: ICON CACHE
+-- =====================================================
+local IconCache = {}
+local IconWaiter = {}
+
+local function FetchFishIconAsync(fishId, callback)
+    if IconCache[fishId] then
+        callback(IconCache[fishId])
+        return
+    end
+
+    if IconWaiter[fishId] then
+        table.insert(IconWaiter[fishId], callback)
+        return
+    end
+
+    IconWaiter[fishId] = { callback }
+
+    task.spawn(function()
+        local fish = FishDB[fishId]
+        if not fish or not fish.Icon then
+            callback("")
+            return
+        end
+
+        -- Check SecretFishData for direct proxy link fallback
+        if fish.Name and SecretFishData[fish.Name] then
+            local proxyUrl = PROXY .. "/asset/" .. tostring(SecretFishData[fish.Name])
+            IconCache[fishId] = proxyUrl
+            for _, cb in ipairs(IconWaiter[fishId]) do cb(proxyUrl) end
+            IconWaiter[fishId] = nil
+            return
+        end
+
+        local assetId = tostring(fish.Icon):match("%d+")
+        if not assetId then
+            callback("")
+            return
+        end
+
+        local api = ("https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&isCircular=false"):format(assetId)
+
+        local ok, res = pcall(function()
+            return HttpRequest({ Url = api, Method = "GET" })
+        end)
+
+        if not ok or not res or not res.Body then
+            callback("")
+            return
+        end
+
+        local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+        if not ok2 then
+            callback("")
+            return
+        end
+
+        local imageUrl = data and data.data and data.data[1] and data.data[1].imageUrl
+        IconCache[fishId] = imageUrl or ""
+
+        for _, cb in ipairs(IconWaiter[fishId]) do
+            cb(IconCache[fishId])
+        end
+        IconWaiter[fishId] = nil
     end)
 end
 
--- Scan Workspace untuk island
-local function ScanIslands()
-    local list,seen = {},{}
-    local kw = {
-        fisherman=true,spawn=true,stingray=true,tropical=true,grove=true,
-        kohana=true,volcano=true,lava=true,coral=true,reef=true,
-        esoteric=true,depths=true,crater=true,lost=true,isle=true,
-        ancient=true,jungle=true,classic=true,pirate=true,cove=true,
-        underwater=true,city=true,market=true,island=true,
+-- =====================================================
+-- BAGIAN 8: FILTER & HELPERS
+-- =====================================================
+local function IsRarityAllowed(fishId)
+    local fish = FishDB[fishId]
+    if not fish then return false end
+    local tier = fish.Tier
+    if type(tier) ~= "number" then return false end
+    if next(Settings.SelectedRarities) == nil then return true end
+    return Settings.SelectedRarities[tier] == true
+end
+
+local function ExtractMutation(weightData, item)
+    local mutation = nil
+
+    if weightData and typeof(weightData) == "table" then
+        mutation = weightData.Mutation or weightData.Variant or weightData.VariantID
+        if not mutation then
+            for k, v in pairs(weightData) do
+                local lk = string.lower(tostring(k))
+                if lk == "variant" or lk == "variantid" or lk == "mutation" then
+                    mutation = v
+                    break
+                end
+            end
+        end
+    end
+
+    if not mutation and item then
+        mutation = item.Mutation or item.Variant or item.VariantID
+        if not mutation and item.Properties then
+            mutation = item.Properties.Mutation or item.Properties.Variant or item.Properties.VariantID
+        end
+    end
+
+    return mutation
+end
+
+local function ResolvePlayerName(arg)
+    if typeof(arg) == "Instance" and arg:IsA("Player") then
+        return arg.Name
+    elseif typeof(arg) == "string" then
+        return arg
+    elseif typeof(arg) == "table" and arg.Name then
+        return tostring(arg.Name)
+    end
+    return LocalPlayer.Name
+end
+
+-- =====================================================
+-- BAGIAN 9: WEBHOOK ENGINE (Discord Components V2)
+-- =====================================================
+
+-- Helper: Build a Components V2 fish catch payload (Vechnost Style)
+local function BuildPayload(playerName, fishId, weight, mutation)
+    local fish = FishDB[fishId]
+    if not fish then return nil end
+
+    local tier = fish.Tier
+    local rarityName = RARITY_MAP[tier] or "Unknown"
+    local mutText = (mutation ~= nil) and tostring(mutation) or "None"
+    local weightText = string.format("%.1fkg", weight or 0)
+    local iconUrl = IconCache[fishId] or ""
+    
+    -- Rarity emoji by tier
+    local _e = string.char
+    local RARITY_EMOJI = {
+        [1] = _e(226,172,156), [2] = _e(240,159,159,169), [3] = _e(240,159,159,166),
+        [4] = _e(240,159,159,170), [5] = _e(240,159,159,167), [6] = _e(240,159,159,165),
+        [7] = _e(240,159,159,165), [8] = _e(240,159,159,169), [9] = _e(240,159,159,166),
     }
-    local em = {
-        fisherman="🏝️",spawn="🏠",stingray="🏝️",tropical="🌴",grove="🌴",
-        kohana="🌋",volcano="🌋",lava="🌋",coral="🪸",reef="🪸",
-        esoteric="⚓",depths="⚓",crater="🌑",lost="🌊",isle="🌊",
-        ancient="🌿",jungle="🌿",classic="🎮",pirate="🏴‍☠️",cove="🏴‍☠️",
-        underwater="💧",island="🏝️",
+    local rarityEmoji = RARITY_EMOJI[tier] or ""
+    local dateStr = os.date("!%B %d, %Y")
+
+    -- Components V2 payload
+    local payload = {
+        username = "Vechnost Notifier",
+        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+        flags = 32768,
+        components = {
+            {
+                type = 17,
+                components = {
+                    -- Header baru: # NEW FISH CAUGHT!
+                    { type = 10, content = "# NEW FISH CAUGHT!" },
+                    
+                    -- Pembatas garis pertama
+                    { type = 14, spacing = 1, divider = true },
+                    
+                    -- Text: __@username you got new [RARITY] fish__
+                    { 
+                        type = 10, 
+                        content = "__@" .. (playerName or "Unknown") .. " you got new " .. string.upper(rarityName) .. " fish__" 
+                    },
+                    
+                    -- Section Fish Name & Thumbnail
+                    {
+                        type = 9,
+                        components = {
+                            { type = 10, content = "**Fish Name**" },
+                            { type = 10, content = "> " .. (fish.Name or "Unknown") }
+                        },
+                        accessory = iconUrl ~= "" and {
+                            type = 11,
+                            media = { url = iconUrl }
+                        } or nil
+                    },
+                    
+                    -- Section Fish Tier
+                    { type = 10, content = "**Fish Tier**" },
+                    { type = 10, content = "> " .. string.upper(rarityName) },
+                    
+                    -- Section Weight
+                    { type = 10, content = "**Weight**" },
+                    { type = 10, content = "> " .. weightText },
+                    
+                    -- Section Mutation
+                    { type = 10, content = "**Mutation**" },
+                    { type = 10, content = "> " .. mutText },
+
+                    -- Pembatas garis kedua
+                    { type = 14, spacing = 1, divider = true },
+
+                    -- Footer baru
+                    { type = 10, content = "> Notification by discord.gg/vechnost" },
+                    { type = 10, content = "-# " .. dateStr }
+                }
+            }
+        }
     }
+
+    return payload
+end
+
+
+-- Helper: Build activation payload (Vechnost Style)
+local function BuildActivationPayload(playerName, mode)
+    local dateStr = os.date("!%B %d, %Y")
+    return {
+        username = "Vechnost Notifier",
+        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png?ex=69a96593&is=69a81413&hm=04e442b9e2b765e68e0f73bb0d6de014c6060b67b0bf0d7bb2bace70bfa4ff19&",
+        flags = 32768,
+        components = {
+            {
+                type = 17,
+                accent_color = 0x30ff6a,
+                components = {
+                    {
+                        type = 10,
+                        content = "**" .. playerName .. "  Webhook Activated !**"
+                    },
+                    { type = 14, spacing = 1, divider = true },
+                    {
+                        type = 10,
+                        content = "### Vechnost Webhook Notifier"
+                    },
+                    {
+                        type = 10,
+                        content = "- **Account Name:** " .. playerName .. "\n- **Mode:** " .. mode .. "\n- **Status:** Online"
+                    },
+                    { type = 14, spacing = 1, divider = true },
+                    {
+                        type = 10,
+                        content = "-# " .. dateStr
+                    }
+                }
+            }
+        }
+    }
+end
+
+-- Helper: Build test payload (Vechnost Style)
+local function BuildTestPayload(playerName)
+    local dateStr = os.date("!%B %d, %Y")
+    return {
+        username = "Vechnost Notifier",
+        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png?ex=69a96593&is=69a81413&hm=04e442b9e2b765e68e0f73bb0d6de014c6060b67b0bf0d7bb2bace70bfa4ff19&",
+        flags = 32768,
+        components = {
+            {
+                type = 17,
+                accent_color = 0x5865f2,
+                components = {
+                    {
+                        type = 10,
+                        content = "**Test Message**"
+                    },
+                    { type = 14, spacing = 1, divider = true },
+                    {
+                        type = 10,
+                        content = "Webhook berfungsi dengan baik!\n\n- **Dikirim oleh:** " .. playerName
+                    },
+                    { type = 14, spacing = 1, divider = true },
+                    {
+                        type = 10,
+                        content = "-# " .. dateStr
+                    }
+                }
+            }
+        }
+    }
+end
+
+local function SendWebhook(payload)
+    if Settings.Url == "" then return end
+    if not HttpRequest then return end
+    if not payload then return end
+
     pcall(function()
-        for _, obj in ipairs(WS:GetChildren()) do
-            if (obj:IsA("Model") or obj:IsA("Folder")) and not seen[obj.Name] then
-                local lo=obj.Name:lower():gsub("%s","")
-                for k in pairs(kw) do
-                    if lo:find(k,1,true) then
-                        local part=obj.PrimaryPart
-                        if not part then
-                            for _, p in ipairs(obj:GetDescendants()) do
-                                if p:IsA("BasePart") then part=p;break end
-                            end
-                        end
-                        if part then
-                            local e="📍"
-                            for ek,ec in pairs(em) do
-                                if lo:find(ek,1,true) then e=ec;break end
-                            end
-                            seen[obj.Name]=true
-                            table.insert(list,{Name=e.." "..obj.Name, Pos=part.Position+Vector3.new(0,5,0)})
-                        end
+        -- Append ?with_components=true for Components V2
+        local url = Settings.Url
+        if string.find(url, "?") then
+            url = url .. "&with_components=true"
+        else
+            url = url .. "?with_components=true"
+        end
+
+        HttpRequest({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+end
+
+-- =====================================================
+-- BAGIAN 10: SERVER-WIDE FISH DETECTION
+-- =====================================================
+local Connections = {}
+local ChatSentDedup = {}
+local RecentChatWeights = {} -- Cache: fishName -> weight from chat messages
+
+-- CHAT MONITOR: Parse server chat messages
+-- Format: "[Server]: PLAYER obtained a FISHNAME (WEIGHTkg) with a 1 in X chance!"
+local function ParseChatForFish(messageText)
+    if not Settings.Active then return end
+    if not Settings.ServerWide then return end
+    if not messageText or messageText == "" then return end
+
+    -- Pattern: "PLAYER obtained a FISHNAME (WEIGHTkg)"
+    -- Also try: "PLAYER obtained FISHNAME" without "a"
+    local playerName, fishName, weightStr = string.match(messageText, "(%S+)%s+obtained%s+a%s+(.-)%s*%(([%d%.]+)kg%)")
+
+    if not playerName then
+        playerName, fishName, weightStr = string.match(messageText, "(%S+)%s+obtained%s+(.-)%s*%(([%d%.]+)kg%)")
+    end
+
+    if not playerName then
+        playerName, fishName = string.match(messageText, "(%S+)%s+obtained%s+a%s+(.-)%s*with")
+    end
+
+    if not playerName then
+        playerName, fishName = string.match(messageText, "(%S+)%s+obtained%s+(.-)%s*with")
+    end
+
+    if not playerName or not fishName then return end
+
+    -- Clean up fish name (remove trailing spaces)
+    fishName = string.gsub(fishName, "%s+$", "")
+
+    -- Cache weight from chat for all players (event handler can use this)
+    local weight = tonumber(weightStr) or 0
+    if weight > 0 and fishName then
+        RecentChatWeights[fishName] = weight
+        task.defer(function()
+            task.wait(10)
+            if RecentChatWeights[fishName] == weight then
+                RecentChatWeights[fishName] = nil
+            end
+        end)
+    end
+
+    -- Skip own catches (handled by primary hook which uses cached weight)
+    if playerName == LocalPlayer.Name or playerName == LocalPlayer.DisplayName then
+        return
+    end
+
+    -- Lookup fish in database by name
+    local fishId = FishNameToId[fishName] or FishNameToId[string.lower(fishName)]
+    if not fishId then
+        -- Try partial match
+        for name, id in pairs(FishNameToId) do
+            if string.find(string.lower(fishName), string.lower(name)) or string.find(string.lower(name), string.lower(fishName)) then
+                fishId = id
+                break
+            end
+        end
+    end
+
+    if not fishId then
+        warn("[Vechnost] Chat fish not in DB:", fishName)
+        return
+    end
+
+    -- Rarity filter
+    if not IsRarityAllowed(fishId) then return end
+
+    -- Dedup by message content + timestamp
+    local dedupKey = playerName .. fishName .. tostring(math.floor(os.time() / 2))
+    if ChatSentDedup[dedupKey] then return end
+    ChatSentDedup[dedupKey] = true
+
+    -- Clean up old dedup entries periodically
+    task.defer(function()
+        task.wait(10)
+        ChatSentDedup[dedupKey] = nil
+    end)
+
+    Settings.LogCount = Settings.LogCount + 1
+    warn("[Vechnost] Notifier via CHAT:", playerName, "caught", FishDB[fishId].Name, "(", weight, "kg)")
+
+    FetchFishIconAsync(fishId, function()
+        SendWebhook(BuildPayload(playerName, fishId, weight, nil))
+    end)
+end
+
+-- DIRECT HANDLER: Matches exact UQiLL data format
+-- ObtainedNewFishNotification fires with: (playerOrNil, weightData, wrapper)
+local function HandleFishCaught(playerArg, weightData, wrapper)
+    if not Settings.Active then return end
+
+    -- Extract item from wrapper
+    local item = nil
+    if wrapper and typeof(wrapper) == "table" and wrapper.InventoryItem then
+        item = wrapper.InventoryItem
+    end
+
+    -- If wrapper didn't work, maybe weightData IS the wrapper
+    if not item and weightData and typeof(weightData) == "table" and weightData.InventoryItem then
+        item = weightData.InventoryItem
+    end
+
+    if not item then
+        warn("[Vechnost] No InventoryItem found in event data")
+        return
+    end
+
+    if not item.Id or not item.UUID then
+        warn("[Vechnost] Item missing Id or UUID")
+        return
+    end
+
+    -- Check if fish exists in database
+    if not FishDB[item.Id] then return end
+
+    -- Rarity filter
+    if not IsRarityAllowed(item.Id) then return end
+
+    -- UUID dedup
+    if Settings.SentUUID[item.UUID] then return end
+    Settings.SentUUID[item.UUID] = true
+
+    -- Resolve player name
+    local playerName = ResolvePlayerName(playerArg)
+
+    -- Skip non-local if not server-wide
+    if not Settings.ServerWide and playerName ~= LocalPlayer.Name then return end
+
+    -- Extract weight (try multiple sources)
+    local weight = 0
+    -- Debug: log weightData and item keys on first catch
+    if Settings.LogCount == 0 then
+        if weightData and typeof(weightData) == "table" then
+            warn("[Vechnost] weightData keys:")
+            for k, v in pairs(weightData) do
+                warn("  wD." .. tostring(k) .. " = " .. tostring(v))
+            end
+        elseif weightData then
+            warn("[Vechnost] weightData type:", typeof(weightData), "val:", tostring(weightData))
+        end
+        if item then
+            warn("[Vechnost] item keys:")
+            for k, v in pairs(item) do
+                warn("  item." .. tostring(k) .. " = " .. tostring(v))
+            end
+        end
+    end
+
+    if weightData and typeof(weightData) == "table" then
+        weight = weightData.Weight or weightData.weight or weightData.Size or weightData.size or 0
+    elseif weightData and type(weightData) == "number" then
+        weight = weightData
+    end
+    -- Fallback: weight might be in the item itself
+    if weight == 0 and item then
+        weight = item.Weight or item.weight or item.Size or item.size or 0
+    end
+
+    -- Fallback 2: check chat cache if weight is still 0
+    if weight == 0 then
+        local fishInfo = FishDB[item.Id]
+        if fishInfo and fishInfo.Name then
+            local cachedWeight = RecentChatWeights[fishInfo.Name]
+            if cachedWeight then
+                weight = cachedWeight
+                warn("[Vechnost] Weight recovered from chat cache:", weight)
+            end
+        end
+    end
+
+    -- Extract mutation
+    local mutation = ExtractMutation(weightData, item)
+
+    Settings.LogCount = Settings.LogCount + 1
+    warn("[Vechnost] Fish caught! Player:", playerName, "Fish:", FishDB[item.Id].Name, "Count:", Settings.LogCount)
+
+    FetchFishIconAsync(item.Id, function()
+        SendWebhook(BuildPayload(playerName, item.Id, weight, mutation))
+    end)
+end
+
+-- GENERIC SCANNER: For other remotes that might carry fish data
+local function TryProcessGeneric(remoteName, ...)
+    if not Settings.Active then return end
+
+    local args = {...}
+    for i = 1, #args do
+        local arg = args[i]
+        if typeof(arg) == "table" then
+            local item = nil
+            if arg.InventoryItem then
+                item = arg.InventoryItem
+            elseif arg.Id and arg.UUID then
+                item = arg
+            end
+
+            if item and item.Id and item.UUID and FishDB[item.Id] then
+                -- Found fish data, delegate to main handler
+                local playerArg = (i > 1) and args[1] or nil
+                local weightArg = nil
+                for j = 1, #args do
+                    if typeof(args[j]) == "table" and args[j].Weight then
+                        weightArg = args[j]
                         break
                     end
                 end
+                HandleFishCaught(playerArg, weightArg, arg)
+                return
             end
-        end
-    end)
-    if #list==0 then table.insert(list,{Name="🏠 Spawn",Pos=Vector3.new(0,5,0)}) end
-    return list
-end
-
--- ============================================================
--- 10. AUTO FISH (VIM click-based, mekanik Fish It = spam click)
--- ============================================================
-local FL
-local function FishCycle()
-    local ct=0.25+math.random()*0.5
-    if VIM then
-        pcall(function() VIM:SendMouseButtonEvent(0,0,0,true,game,1) end)
-        task.wait(ct)
-        pcall(function() VIM:SendMouseButtonEvent(0,0,0,false,game,1) end)
-    end
-    task.wait(0.04+math.random()*0.04)
-    local re=0.7+math.random()*0.6
-    local en=os.clock()+re
-    while os.clock()<en and S.AFish do
-        if VIM then
-            pcall(function()
-                VIM:SendMouseButtonEvent(0,0,0,true,game,1)
-                task.wait(0.018+math.random()*0.015)
-                VIM:SendMouseButtonEvent(0,0,0,false,game,1)
-            end)
-        end
-        task.wait(0.018+math.random()*0.015)
-    end
-    task.wait(S.FDelay+math.random()*0.15)
-end
-
-local function StartFish()
-    if FL then return end
-    FL=task.spawn(function()
-        while S.AFish do pcall(FishCycle) end
-        FL=nil
-    end)
-end
-local function StopFish()
-    S.AFish=false
-    if VIM then pcall(function() VIM:SendMouseButtonEvent(0,0,0,false,game,1) end) end
-    if FL then task.cancel(FL);FL=nil end
-end
-
--- ============================================================
--- 11. AUTO SELL
--- ============================================================
-local SL
-local function TrySell()
-    pcall(function()
-        for _,o in pairs(WS:GetDescendants()) do
-            if o:IsA("ProximityPrompt") and ((o.ActionText..o.ObjectText):lower():find("sell")) then
-                pcall(function() fireproximityprompt(o) end); return
-            end
-        end
-        if _net then
-            for _,c in pairs(_net:GetDescendants()) do
-                if c.Name:lower():find("sell") and c:IsA("RemoteEvent") then
-                    c:FireServer(); return
-                end
-            end
-        end
-    end)
-end
-local function StartSell()
-    if SL then return end
-    SL=task.spawn(function()
-        while S.ASell do TrySell(); task.wait(S.SDelay+math.random()) end
-        SL=nil
-    end)
-end
-local function StopSell()
-    S.ASell=false
-    if SL then task.cancel(SL);SL=nil end
-end
-
--- ============================================================
--- 12. TRADING
--- ============================================================
-local TC={}
-local function ItemNames(data)
-    local r={}
-    pcall(function()
-        for _,it in pairs(data.OfferedItems or data.Items or {}) do
-            local f=it.Id and DB[it.Id]
-            table.insert(r,f and (f.N.." ("..( RM[f.T] or "?")..")") or tostring(it.Id or "?"))
-        end
-    end)
-    return r
-end
-local function ShouldAccept(data)
-    local ok=false
-    pcall(function()
-        for _,it in pairs(data.ReceivedItems or data.TheirItems or {}) do
-            local f=it.Id and DB[it.Id]
-            if f and f.T and f.T>=S.TRarity then ok=true;break end
-        end
-    end)
-    return ok
-end
-local function StartTrade()
-    for _,c in ipairs(TC) do pcall(function() c:Disconnect() end) end; TC={}
-    if not _net then return end
-    pcall(function()
-        for _,child in pairs(_net:GetDescendants()) do
-            if child.Name:lower():find("trade") and child:IsA("RemoteEvent") then
-                local co=child.OnClientEvent:Connect(function(...)
-                    local d=({...})[1]; if not d then return end
-                    if S.TLog and S.Url~="" then
-                        local sent=ItemNames(d); local recv={}
-                        pcall(function()
-                            for _,it in pairs(d.ReceivedItems or d.TheirItems or {}) do
-                                local f=it.Id and DB[it.Id]
-                                table.insert(recv,f and (f.N.." ("..RM[f.T]..")") or tostring(it.Id or "?"))
-                            end
-                        end)
-                        local p=tostring(d.Partner or d.PlayerName or "?")
-                        task.spawn(function() SendWH(WH_Trade(LP.Name,p,sent,recv)) end)
-                    end
-                    if S.AAccept and ShouldAccept(d) then
-                        pcall(function()
-                            for _,c in pairs(_net:GetDescendants()) do
-                                if c.Name:lower():find("accepttrade") and c:IsA("RemoteEvent") then c:FireServer(d) end
-                            end
-                        end)
-                    elseif S.ADecline then
-                        pcall(function()
-                            for _,c in pairs(_net:GetDescendants()) do
-                                if c.Name:lower():find("declinetrade") and c:IsA("RemoteEvent") then c:FireServer(d) end
-                            end
-                        end)
-                    end
-                end)
-                table.insert(TC,co)
-            end
-        end
-    end)
-end
-local function StopTrade()
-    for _,c in ipairs(TC) do pcall(function() c:Disconnect() end) end; TC={}
-end
-
--- ============================================================
--- 13. ICON CACHE
--- ============================================================
-local IC={};local IW={}
-local function GetIcon(id,cb)
-    if IC[id] then cb(IC[id]);return end
-    if IW[id] then table.insert(IW[id],cb);return end
-    IW[id]={cb}
-    task.spawn(function()
-        local f=DB[id]; if not f or not f.Ic then cb("");return end
-        local aid=tostring(f.Ic):match("%d+"); if not aid then cb("");return end
-        local ok,res=pcall(function()
-            return HR({Url=("https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png"):format(aid),Method="GET"})
-        end)
-        if not ok or not res or not res.Body then cb("");return end
-        local ok2,d=pcall(Http.JSONDecode,Http,res.Body)
-        local url=ok2 and d and d.data and d.data[1] and d.data[1].imageUrl or ""
-        IC[id]=url
-        for _,f2 in ipairs(IW[id]) do f2(url) end
-        IW[id]=nil
-    end)
-end
-
--- ============================================================
--- 14. WEBHOOK PAYLOADS
--- ============================================================
-local function WH_Fish(pn,id,w,mu)
-    local f=DB[id]; if not f then return nil end
-    local rn=RM[f.T] or "?"
-    local date=os.date("!%B %d, %Y")
-    return {
-        username="Vechnost",
-        avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags=32768,
-        components={ {type=17, components={
-            {type=10,content="# NEW FISH CAUGHT!"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="__@"..(pn or "?").." you got new "..rn:upper().." fish__"},
-            {type=9,components={{type=10,content="**Fish Name**"},{type=10,content="> "..(f.N or "?")}},
-                accessory=(IC[id] or "")~="" and {type=11,media={url=IC[id]}} or nil},
-            {type=10,content="**Tier**"},{type=10,content="> "..rn:upper()},
-            {type=10,content="**Weight**"},{type=10,content="> "..string.format("%.1fkg",w or 0)},
-            {type=10,content="**Mutation**"},{type=10,content="> "..(mu ~= nil and tostring(mu) or "None")},
-            {type=10,content="**Est. Sell**"},{type=10,content="> ~"..Fmt(f.Sp).." coins"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="> discord.gg/vechnost"},
-            {type=10,content="-# "..date},
-        }}}
-    }
-end
-
-local function WH_Act(pn,mode)
-    local date=os.date("!%B %d, %Y")
-    return {username="Vechnost",avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",flags=32768,
-        components={ {type=17,accent_color=0x30ff6a,components={
-            {type=10,content="**"..pn.." Webhook Activated!**"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="### Vechnost Hub v2.2"},
-            {type=10,content="- **Account:** "..pn.."\n- **Mode:** "..mode.."\n- **Status:** Online"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="-# "..date},
-        }}}}
-end
-
-local function WH_Test(pn)
-    local date=os.date("!%B %d, %Y")
-    return {username="Vechnost",avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",flags=32768,
-        components={ {type=17,accent_color=0x5865f2,components={
-            {type=10,content="**Test Message ✅**"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="Webhook OK!\n- **By:** "..pn},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="-# "..date},
-        }}}}
-end
-
-local function WH_Trade(s,r,si,ri)
-    local date=os.date("!%B %d, %Y")
-    local st,rt="",""
-    for _,v in ipairs(si or {}) do st=st.."\n- "..v end
-    for _,v in ipairs(ri or {}) do rt=rt.."\n- "..v end
-    if st=="" then st="\n- (none)" end
-    if rt=="" then rt="\n- (none)" end
-    return {username="Vechnost",avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",flags=32768,
-        components={ {type=17,accent_color=0xffd700,components={
-            {type=10,content="# TRADE COMPLETED"},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="**"..s.."** ↔ **"..r.."**"},
-            {type=10,content="**Sent:**"..st},
-            {type=10,content="**Got:**"..rt},
-            {type=14,spacing=1,divider=true},
-            {type=10,content="-# "..date},
-        }}}}
-end
-
-local function SendWH(p)
-    if S.Url=="" or not HR or not p then return end
-    pcall(function()
-        local u=S.Url..(S.Url:find("?")and"&"or"?").."with_components=true"
-        HR({Url=u,Method="POST",Headers={["Content-Type"]="application/json"},Body=Http:JSONEncode(p)})
-    end)
-end
-
--- ============================================================
--- 15. WEBHOOK LOGGER (server-wide)
--- ============================================================
-local WC={};local CD={}
-local function ParseChat(txt)
-    if not S.Active or not S.Wide or not txt or txt=="" then return end
-    local pn,fn,ws=txt:match("(%S+)%s+obtained%s+a%s+(.-)%s*%(([%d%.]+)kg%)")
-    if not pn then pn,fn,ws=txt:match("(%S+)%s+obtained%s+(.-)%s*%(([%d%.]+)kg%)") end
-    if not pn then pn,fn=txt:match("(%S+)%s+obtained%s+a%s+(.-)%s*with") end
-    if not pn then pn,fn=txt:match("(%S+)%s+obtained%s+(.-)%s*with") end
-    if not pn or not fn then return end
-    fn=fn:gsub("%s+$","")
-    if pn==LP.Name or pn==LP.DisplayName then return end
-    local id=NtoId[fn] or NtoId[fn:lower()]
-    if not id then
-        for nm,i in pairs(NtoId) do
-            if fn:lower():find(nm:lower(),1,true) or nm:lower():find(fn:lower(),1,true) then id=i;break end
         end
     end
-    if not id or not ROK(id) then return end
-    local k=pn..fn..tostring(math.floor(os.time()/2))
-    if CD[k] then return end; CD[k]=true
-    task.defer(function() task.wait(10);CD[k]=nil end)
-    S.Logs=S.Logs+1
-    GetIcon(id,function() SendWH(WH_Fish(pn,id,tonumber(ws) or 0,nil)) end)
-end
-
-local function HandleCatch(pa,wd,wr)
-    if not S.Active then return end
-    local it=(wr and typeof(wr)=="table" and wr.InventoryItem)
-          or (wd and typeof(wd)=="table" and wd.InventoryItem)
-    if not it or not it.Id or not it.UUID then return end
-    if not DB[it.Id] or not ROK(it.Id) then return end
-    if S.SentUID[it.UUID] then return end; S.SentUID[it.UUID]=true
-    local pn=(function()
-        if typeof(pa)=="Instance" and pa:IsA("Player") then return pa.Name
-        elseif typeof(pa)=="string" then return pa
-        elseif typeof(pa)=="table" and pa.Name then return tostring(pa.Name) end
-        return LP.Name
-    end)()
-    if not S.Wide and pn~=LP.Name then return end
-    local w=(wd and typeof(wd)=="table" and wd.Weight) or 0
-    local mu=nil; pcall(function() mu=(wd and(wd.Mutation or wd.Variant)) or (it.Mutation or it.Variant) end)
-    S.Logs=S.Logs+1
-    GetIcon(it.Id,function() SendWH(WH_Fish(pn,it.Id,w,mu)) end)
 end
 
 local function StartLogger()
-    if S.Active then return end
-    if not _net or not _fishEvt then
-        Rayfield:Notify({Title="Vechnost",Content="Remotes not found!",Duration=5}); return
+    if Settings.Active then return end
+
+    if not net or not ObtainedNewFish then
+            Rayfield:Notify({ Title = "Vechnost", Content = "ERROR: Game remotes not found! Are you in Fish It?", Duration = 5 })
+        return
     end
-    S.Active=true; S.SentUID={}; S.Logs=0
-    pcall(function()
-        WC[#WC+1]=TCS.MessageReceived:Connect(function(m)
-            pcall(function() if(m.Text or ""):find("obtained") then ParseChat(m.Text) end end)
-        end)
-    end)
-    pcall(function()
-        WC[#WC+1]=_fishEvt.OnClientEvent:Connect(function(...) HandleCatch(...) end)
-    end)
-    if S.Wide then
+
+    Settings.Active = true
+    Settings.SentUUID = {}
+    Settings.LogCount = 0
+
+    -- CHAT MONITOR: Listen to server chat for fish catch announcements
+    if Settings.ServerWide then
         pcall(function()
-            WC[#WC+1]=PGui.DescendantAdded:Connect(function(d)
-                if not d:IsA("TextLabel") then return end
-                task.defer(function()
-                    local t=d.Text or ""
-                    for id,fd in pairs(DB) do
-                        if fd.N and t:find(fd.N,1,true) and ROK(id) then
-                            for _,p in pairs(Players:GetPlayers()) do
-                                if p~=LP and (t:find(p.Name,1,true) or t:find(p.DisplayName,1,true)) then
-                                    local k="G"..t:sub(1,30)..os.time()
-                                    if S.SentUID[k] then return end; S.SentUID[k]=true; S.Logs=S.Logs+1
-                                    GetIcon(id,function() SendWH(WH_Fish(p.Name,id,0,nil)) end); return
-                                end
-                            end; return
-                        end
+            local TextChatService = game:GetService("TextChatService")
+            Connections[#Connections + 1] = TextChatService.MessageReceived:Connect(function(textChatMessage)
+                pcall(function()
+                    local text = textChatMessage.Text or ""
+                    if string.find(text, "obtained") then
+                        ParseChatForFish(text)
                     end
                 end)
             end)
+            warn("[Vechnost] Chat monitor (TextChatService) active")
         end)
+
+        -- Fallback: Old chat system via StarterGui
         pcall(function()
-            for _,ch in pairs(_net:GetChildren()) do
-                if ch:IsA("RemoteEvent") and ch~=_fishEvt then
-                    WC[#WC+1]=ch.OnClientEvent:Connect(function(...)
-                        for _,a in ipairs({...}) do
-                            if typeof(a)=="table" then
-                                local it=a.InventoryItem or (a.Id and a.UUID and a)
-                                if it and it.Id and it.UUID and DB[it.Id] then HandleCatch(({...})[1],nil,a) end
+            local chatFrame = PlayerGui:WaitForChild("Chat", 3)
+            if chatFrame then
+                chatFrame.DescendantAdded:Connect(function(desc)
+                    if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+                        task.defer(function()
+                            local text = desc.Text or ""
+                            if string.find(text, "obtained") then
+                                ParseChatForFish(text)
                             end
-                        end
-                    end)
-                end
+                        end)
+                    end
+                end)
+                warn("[Vechnost] Chat monitor (StarterGui) active")
             end
         end)
     end
-    task.spawn(function() SendWH(WH_Act(LP.Name,S.Wide and "Server-Wide" or "Local")) end)
+
+    -- PRIMARY: ObtainedNewFishNotification (exact format from UQiLL)
+    local ok1, err1 = pcall(function()
+        Connections[#Connections + 1] = ObtainedNewFish.OnClientEvent:Connect(function(playerArg, weightData, wrapper)
+            HandleFishCaught(playerArg, weightData, wrapper)
+        end)
+    end)
+    if ok1 then
+        warn("[Vechnost] Primary hook connected OK")
+    else
+        warn("[Vechnost] Primary hook error:", err1)
+    end
+
+    -- SECONDARY: GUI Notification Scanner
+    -- Fish It shows server-wide notifications when players catch rare fish
+    -- We scan PlayerGui for these notification GUIs and parse the text
+    if Settings.ServerWide then
+        pcall(function()
+            local function ScanNotificationText(textObj)
+                if not textObj or not textObj:IsA("TextLabel") then return end
+                local text = textObj.Text or ""
+                if text == "" then return end
+
+                -- Look for patterns like "PlayerName caught FishName" or similar
+                -- Check if any fish name from our DB appears in the text
+                for fishId, fishData in pairs(FishDB) do
+                    if fishData.Name and string.find(text, fishData.Name) then
+                        -- Found a fish name in notification text!
+                        -- Try to extract player name (usually before the fish name)
+                        local playerName = "Unknown"
+
+                        -- Try common patterns
+                        for _, player in pairs(Players:GetPlayers()) do
+                            if player ~= LocalPlayer and string.find(text, player.Name) then
+                                playerName = player.Name
+                                break
+                            elseif player ~= LocalPlayer and string.find(text, player.DisplayName) then
+                                playerName = player.DisplayName
+                                break
+                            end
+                        end
+
+                        -- Skip if it's our own catch (already handled by primary hook)
+                        if playerName == LocalPlayer.Name or playerName == LocalPlayer.DisplayName then
+                            return
+                        end
+                        if string.find(text, LocalPlayer.Name) or string.find(text, LocalPlayer.DisplayName) then
+                            return
+                        end
+
+                        -- Skip if we can't identify another player
+                        if playerName == "Unknown" then return end
+
+                        -- Create dedup key from text
+                        local dedupKey = "GUI_" .. text .. "_" .. os.time()
+                        if Settings.SentUUID[dedupKey] then return end
+                        Settings.SentUUID[dedupKey] = true
+
+                        -- Rarity filter
+                        if not IsRarityAllowed(fishId) then return end
+
+                        Settings.LogCount = Settings.LogCount + 1
+                        warn("[Vechnost] Notifier catch detected via GUI!", playerName, fishData.Name)
+
+                        FetchFishIconAsync(fishId, function()
+                            SendWebhook(BuildPayload(playerName, fishId, 0, nil))
+                        end)
+                        return
+                    end
+                end
+            end
+
+            -- Watch for new GUI elements appearing in PlayerGui
+            Connections[#Connections + 1] = PlayerGui.DescendantAdded:Connect(function(desc)
+                if not Settings.Active then return end
+                if desc:IsA("TextLabel") then
+                    task.defer(function()
+                        ScanNotificationText(desc)
+                    end)
+                end
+            end)
+            warn("[Vechnost] GUI notification scanner active")
+        end)
+
+        -- TERTIARY: Replion shared state listener (NON-BLOCKING)
+        -- Runs in background threads so it never blocks the main script
+        pcall(function()
+            local Replion = require(ReplicatedStorage.Packages.Replion)
+
+            local stateNames = {"ServerFeed", "GlobalNotifications", "RecentCatches", "FishLog", "ServerNotifications", "Feed"}
+            for _, stateName in ipairs(stateNames) do
+                task.spawn(function()
+                    local found = false
+                    -- Timeout: cancel after 3 seconds
+                    task.delay(3, function()
+                        if not found then return end
+                    end)
+                    local ok, state = pcall(function()
+                        return Replion.Client:WaitReplion(stateName)
+                    end)
+                    if ok and state then
+                        found = true
+                        warn("[Vechnost] Found Replion state:", stateName)
+                        pcall(function()
+                            state:OnChange(function(key, value)
+                                if not Settings.Active then return end
+                                if typeof(value) == "table" then
+                                    if value.InventoryItem or (value.Id and value.UUID) then
+                                        HandleFishCaught(value.Player or value.PlayerName, value, {InventoryItem = value.InventoryItem or value})
+                                    end
+                                end
+                            end)
+                        end)
+                    end
+                end)
+            end
+        end)
+
+        -- QUATERNARY: Hook ALL RemoteEvents for fish data
+        local hookCount = 0
+        pcall(function()
+            for _, child in pairs(net:GetChildren()) do
+                if child:IsA("RemoteEvent") and child ~= ObtainedNewFish then
+                    Connections[#Connections + 1] = child.OnClientEvent:Connect(function(...)
+                        TryProcessGeneric(child.Name, ...)
+                    end)
+                    hookCount = hookCount + 1
+                end
+            end
+        end)
+        warn("[Vechnost] Remote hooks:", hookCount, "events connected")
+
+        -- QUINARY: Join/Leave & Backpack hooks
+        local function WatchBackpack(player)
+            Connections[#Connections + 1] = player.CharacterAdded:Connect(function()
+                local bp = player:WaitForChild("Backpack", 15)
+                if not bp then return end
+                Connections[#Connections + 1] = bp.ChildAdded:Connect(function(item)
+                    if not Settings.Active then return end
+                    local fishId = FishNameToId[item.Name] or FishNameToId[string.lower(item.Name)]
+                    if fishId and IsRarityAllowed(fishId) then
+                        local playerName = player.Name
+                        if not Settings.ServerWide and playerName ~= LocalPlayer.Name then return end
+                        task.defer(function()
+                            task.wait(2)
+                            local dedupKey = playerName .. item.Name .. tostring(math.floor(os.time() / 2))
+                            if ChatSentDedup[dedupKey] then return end
+                            local fallbackWeight = 0
+                            if RecentChatWeights[item.Name] then fallbackWeight = RecentChatWeights[item.Name] end
+                            HandleFishCaught(player, fallbackWeight, {InventoryItem = {Id = fishId, UUID = "Fallback_"..fishId..tick()}})
+                        end)
+                    end
+                end)
+            end)
+        end
+
+        Connections[#Connections + 1] = Players.PlayerAdded:Connect(function(newPlayer)
+            if Settings.LogPlayerJoin and Settings.Url ~= "" then
+                local avatarUrl = PROXY .. "/avatar/" .. tostring(newPlayer.UserId)
+                SendWebhook({
+                    username = "Vechnost Alert",
+                    avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+                    embeds = {{
+                        title = "✅ PLAYER JOINED SERVER",
+                        description = "**Username:** `" .. newPlayer.Name .. "`",
+                        color = 65280,
+                        thumbnail = { url = avatarUrl }
+                    }}
+                })
+            end
+            WatchBackpack(newPlayer)
+        end)
+
+        Connections[#Connections + 1] = Players.PlayerRemoving:Connect(function(leftPlayer)
+            if Settings.LogPlayerLeave and Settings.Url ~= "" then
+                local avatarUrl = PROXY .. "/avatar/" .. tostring(leftPlayer.UserId)
+                SendWebhook({
+                    username = "Vechnost Alert",
+                    avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+                    embeds = {{
+                        title = "👋 PLAYER LEFT SERVER",
+                        description = "**Username:** `" .. leftPlayer.Name .. "`",
+                        color = 16729344,
+                        thumbnail = { url = avatarUrl }
+                    }}
+                })
+            end
+        end)
+
+        -- Watch existing players' backpack too
+        for _, p in ipairs(Players:GetPlayers()) do
+            WatchBackpack(p)
+        end
+    end
+
+    -- Send activation message (Components V2)
+    task.spawn(function()
+        local mode = Settings.ServerWide and "Server Notifier" or "Local Only"
+        SendWebhook(BuildActivationPayload(LocalPlayer.Name, mode))
+    end)
+
+    warn("[Vechnost] Webhook Logger ENABLED | Mode:", Settings.ServerWide and "Server-Notifier" or "Local")
 end
 
 local function StopLogger()
-    S.Active=false
-    for _,c in ipairs(WC) do pcall(function() c:Disconnect() end) end; WC={}
+    Settings.Active = false
+
+    for _, conn in ipairs(Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    Connections = {}
+
+    warn("[Vechnost] Webhook Logger DISABLED | Total logged:", Settings.LogCount)
 end
 
--- ============================================================
--- 16. CONFIG FEATURES
--- ============================================================
--- Anti-AFK (random interval, pakai VIM)
-local AAT
-local function StartAFK()
-    if AAT then return end
-    AAT=task.spawn(function()
-        while S.AAFK do
-            if VIM then pcall(function()
-                VIM:SendMouseButtonEvent(0,0,0,true,game,1)
-                task.wait(0.05)
-                VIM:SendMouseButtonEvent(0,0,0,false,game,1)
-            end) end
-            task.wait(55+math.random()*30)
-        end; AAT=nil
+-- =====================================================
+-- BAGIAN 10B: AUTOMATION (MACROS)
+-- =====================================================
+local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
+
+-- 1. Anti-AFK
+local afkConn = Players.LocalPlayer.Idled:Connect(function()
+    if Settings.AntiAFK then
+        pcall(function() UserInputService.InputBegan:Fire(Enum.KeyCode.F20, false) end)
+    end
+end)
+if getconnections then
+    for _, v in pairs(getconnections(Players.LocalPlayer.Idled)) do
+        if v.Disable then v:Disable() end
+    end
+end
+
+-- 2. Auto Click Fishing
+task.spawn(function()
+    local FishingController = nil
+    pcall(function()
+        FishingController = require(ReplicatedStorage:WaitForChild("Controllers", 10):WaitForChild("FishingController", 10))
     end)
-end
-local function StopAFK() S.AAFK=false; if AAT then task.cancel(AAT);AAT=nil end end
+    while true do
+        task.wait(0.1)
+        if Settings.AutoClick and FishingController then
+            local randomDelay = math.random(80, 150) / 1000
+            pcall(function() FishingController:RequestFishingMinigameClick() end)
+            task.wait(randomDelay)
+        end
+    end
+end)
 
--- Infinite Jump
-local IJC
-local function StartIJ()
-    if IJC then return end
-    IJC=UIS.JumpRequest:Connect(function()
-        local c=LP.Character; if not c then return end
-        local h=c:FindFirstChildOfClass("Humanoid"); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+-- 3. Block Notifications
+task.spawn(function()
+    local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+    local SmallNotification = PlayerGui and PlayerGui:WaitForChild("Small Notification", 10)
+    RunService.RenderStepped:Connect(function()
+        if Settings.DisablePopups and SmallNotification then
+            pcall(function() SmallNotification.Enabled = false end)
+        end
     end)
-end
-local function StopIJ() S.InfJ=false; if IJC then pcall(function() IJC:Disconnect() end); IJC=nil end end
+end)
 
--- Speed / Jump
-local function ApplySpeed(v)
-    _spoofSpeed=v -- update spoof juga
-    local c=LP.Character; if c then local h=c:FindFirstChildOfClass("Humanoid"); if h then h.WalkSpeed=v end end
-    LP.CharacterAdded:Connect(function(nc) local h=nc:WaitForChild("Humanoid",5); if h then h.WalkSpeed=v end end)
-end
-local function ApplyJump(v)
-    _spoofJump=v
-    local c=LP.Character; if c then local h=c:FindFirstChildOfClass("Humanoid"); if h then h.JumpPower=v end end
-    LP.CharacterAdded:Connect(function(nc) local h=nc:WaitForChild("Humanoid",5); if h then h.JumpPower=v end end)
-end
-
--- ESP
-local EF=Instance.new("Folder"); EF.Name="EF_222"; EF.Parent=WS
-local EL
-local function StartESP()
-    if EL then return end
-    EL=task.spawn(function()
-        while S.ESP do
+-- 4. Ping Monitor
+task.spawn(function()
+    local LastPingAlert = 0
+    while true do
+        task.wait(5)
+        if Settings.PingMonitor and Settings.Url ~= "" then
             pcall(function()
-                EF:ClearAllChildren()
-                for _,p in pairs(Players:GetPlayers()) do
-                    if p~=LP and p.Character then
-                        local hrp=p.Character:FindFirstChild("HumanoidRootPart")
-                        if hrp then
-                            local bb=Instance.new("BillboardGui")
-                            bb.Adornee=hrp;bb.Size=UDim2.fromOffset(160,50)
-                            bb.StudsOffsetWorldSpace=Vector3.new(0,3,0)
-                            bb.AlwaysOnTop=true;bb.Parent=EF
-                            local lb=Instance.new("TextLabel",bb)
-                            lb.Size=UDim2.fromScale(1,1);lb.BackgroundTransparency=1
-                            lb.TextColor3=Color3.fromRGB(255,80,80);lb.TextStrokeTransparency=0
-                            lb.Font=Enum.Font.GothamBold;lb.TextSize=14
-                            local mh=LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-                            local d=mh and math.floor((hrp.Position-mh.Position).Magnitude) or 0
-                            lb.Text="👤 "..p.DisplayName.."\n["..d.." studs]"
+                local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+                if ping > 500 and (tick() - LastPingAlert > 60) then
+                    LastPingAlert = tick()
+                    SendWebhook({
+                        username = "Vechnost Alert",
+                        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+                        embeds = {{
+                            title = "⚠️ SERVER LAG ALERT",
+                            description = "```\nHigh Ping Detected: " .. math.floor(ping) .. " ms\n```\nPlayer: `" .. LocalPlayer.Name .. "`",
+                            color = 16776960
+                        }}
+                    })
+                end
+            end)
+        end
+    end
+end)
+
+-- 5. Auto Reconnect
+local isReconnecting = false
+local function triggerReconnect(kickMsg)
+    if not Settings.AutoReconnect or isReconnecting then return end
+    isReconnecting = true
+    warn("[Vechnost] Auto Reconnect triggered: " .. tostring(kickMsg))
+    if Settings.Url ~= "" then
+        SendWebhook({
+            username = "Vechnost Alert",
+            avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+            embeds = {{
+                title = "🔌 DISCONNECTED",
+                description = "```\nReason: " .. (kickMsg or "Client Closed") .. "\n```\n⚠️ Auto-Reconnecting soon...",
+                color = 16711680
+            }}
+        })
+    end
+    task.wait(5)
+    pcall(function()
+        if #Players:GetPlayers() <= 1 then
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        else
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end
+    end)
+end
+
+GuiService.ErrorMessageChanged:Connect(function(msg)
+    triggerReconnect(msg)
+end)
+
+local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+if promptGui then
+    local promptOverlay = promptGui:FindFirstChild("promptOverlay", true)
+    if promptOverlay then
+        promptOverlay.DescendantAdded:Connect(function(child)
+            if child.Name == "ErrorTitle" or child.Name == "ErrorMessage" then
+                task.wait(0.5)
+                triggerReconnect(child.Text)
+            end
+        end)
+    end
+end
+
+-- 6. Instant Catch
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        if Settings.InstantCatch then
+            pcall(function()
+                local net = game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
+                if net then
+                    local index = net:FindFirstChild("_Index")
+                    if index then
+                        local sleitnick = index:FindFirstChild("sleitnick_net@0.2.0")
+                        if sleitnick and sleitnick:FindFirstChild("net") then
+                            local rnet = sleitnick.net
+                            local equipEnv = rnet:FindFirstChild("RE/EquipToolFromHotbar")
+                            local chargeEnv = rnet:FindFirstChild("RF/ChargeFishingRod")
+                            local minigameEnv = rnet:FindFirstChild("RF/RequestFishingMinigameStarted")
+                            local completeEnv = rnet:FindFirstChild("RE/FishingCompleted")
+                            if equipEnv and chargeEnv and minigameEnv and completeEnv then
+                                equipEnv:FireServer()
+                                chargeEnv:InvokeServer(1)
+                                minigameEnv:InvokeServer(1, 1)
+                                completeEnv:FireServer()
+                            end
                         end
                     end
                 end
             end)
-            task.wait(0.5)
+            task.wait(0.2)
         end
-        EF:ClearAllChildren(); EL=nil
-    end)
-end
-local function StopESP() S.ESP=false; if EL then task.cancel(EL);EL=nil end; EF:ClearAllChildren() end
-
--- ============================================================
--- 17. FLOATING BUTTON (pakai gethui() bukan CoreGui langsung)
--- ============================================================
--- gethui() = returns a hidden container not scanned by anti-cheat
-local _hui = (gethui and gethui()) or _cg
-
-local oldF=_hui:FindFirstChild(_FTAG); if oldF then oldF:Destroy() end
-local BG=Instance.new("ScreenGui")
-BG.Name=_FTAG; BG.ResetOnSpawn=false
-
--- protect GUI sebelum parent
-pcall(function()
-    if syn and syn.protect_gui then syn.protect_gui(BG)
-    elseif protect_gui then protect_gui(BG) end
-end)
-BG.Parent=_hui
-
-local Btn=Instance.new("ImageButton")
-Btn.Size=UDim2.fromOffset(52,52);Btn.Position=UDim2.fromScale(0.05,0.5)
-Btn.BackgroundTransparency=1;Btn.AutoButtonColor=false;Btn.BorderSizePixel=0
-Btn.Image="rbxassetid://127239715511367";Btn.ScaleType=Enum.ScaleType.Fit;Btn.Parent=BG
-Instance.new("UICorner",Btn).CornerRadius=UDim.new(1,0)
-
-local wv=true
-Btn.MouseButton1Click:Connect(function()
-    wv=not wv; pcall(function() Rayfield:SetVisibility(wv) end)
-end)
-local dg=false;local dof=Vector2.zero
-Btn.InputBegan:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-        dg=true;dof=UIS:GetMouseLocation()-Btn.AbsolutePosition
-        i.Changed:Connect(function() if i.UserInputState==Enum.UserInputState.End then dg=false end end)
     end
 end)
-Run.RenderStepped:Connect(function()
-    if not dg then return end
-    local m=UIS:GetMouseLocation();local t=m-dof
-    local vp=(WS.CurrentCamera and WS.CurrentCamera.ViewportSize) or Vector2.new(1920,1080)
-    local sz=Btn.AbsoluteSize
-    Btn.Position=UDim2.fromOffset(math.clamp(t.X,0,vp.X-sz.X),math.clamp(t.Y,0,vp.Y-sz.Y))
+
+-- 7. Auto Sell All
+task.spawn(function()
+    while true do
+        task.wait(30)
+        if Settings.AutoSellAll then
+            pcall(function()
+                local sellEvent = game:GetService("ReplicatedStorage"):FindFirstChild("RF/SellAllItems")
+                if sellEvent then
+                    sellEvent:InvokeServer()
+                    Rayfield:Notify({ Title = "Vechnost Auto Sell", Content = "Semua ikan berhasil dijual!", Duration = 3 })
+                end
+            end)
+        end
+    end
 end)
 
--- ============================================================
--- 18. RAYFIELD WINDOW
--- ============================================================
-local Win=Rayfield:CreateWindow({
-    Name="Vechnost Hub",Icon="fish",
-    LoadingTitle="Vechnost Hub",LoadingSubtitle="v2.2 | Fish It",
-    Theme="Default",ToggleUIKeybind="V",
-    DisableRayfieldPrompts=true,DisableBuildWarnings=true,
-    ConfigurationSaving={Enabled=true,FolderName="Vechnost",FileName="VCfg22"},
-    KeySystem=true,
-    KeySettings={
-        Title="Vechnost Access",Subtitle="Authentication Required",
-        Note="Join discord for key\nhttps://discord.gg/vechnost",
-        FileName="VKey",SaveKey=true,GrabKeyFromSite=false,
-        Key={"Vechnost-Notifier-9999"}
+-- =====================================================
+-- BAGIAN 11: RAYFIELD UI
+-- =====================================================
+local Window = Rayfield:CreateWindow({
+    Name = "Vechnost",
+    Icon = "webhook",
+    LoadingTitle = "Vechnost Webhook Notifier",
+    LoadingSubtitle = "v1.0.0",
+    Theme = "Default",
+    ToggleUIKeybind = "V",
+    DisableRayfieldPrompts = true,
+    DisableBuildWarnings = true,
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "Vechnost",
+        FileName = "VechnostConfig"
+    },
+    KeySystem = true,
+    KeySettings = {
+        Title = "Vechnost Access",
+        Subtitle = "Authentication Required",
+        Note = "Join our discord to get key\n https://discord.gg/vechnost",
+        FileName = "VechnostKey",
+        SaveKey = true,
+        GrabKeyFromSite = false,
+        Key = {"Vechnost-Notifier-9999"}
     },
 })
 
--- ============================================================
--- TAB 1: INFO
--- ============================================================
-local TI=Win:CreateTab("Info","info")
-TI:CreateSection("Vechnost Hub v2.2")
-TI:CreateParagraph({
-    Title="Selamat Datang!",
-    Content="All-in-one hub Fish It — anti-detect vs CODE-BAC\n\n✅ Auto Fish (VIM click)\n✅ Auto Sell\n✅ Auto Trade Monitor\n✅ Teleport (scan Workspace)\n✅ Webhook Server-Wide\n✅ Player ESP\n✅ Anti-AFK, Inf Jump, Speed\n✅ GUI protect_gui / gethui()\n✅ Spoof WalkSpeed ke server\n✅ No warn() fingerprint\n\nby Vechnost | discord.gg/vechnost"
+-- =====================================================
+-- BAGIAN 12: FLOATING TOGGLE BUTTON
+-- =====================================================
+local oldBtn = CoreGui:FindFirstChild(GUI_NAMES.Mobile)
+if oldBtn then oldBtn:Destroy() end
+
+local BtnGui = Instance.new("ScreenGui")
+BtnGui.Name = GUI_NAMES.Mobile
+BtnGui.ResetOnSpawn = false
+BtnGui.Parent = CoreGui
+
+local Button = Instance.new("ImageButton")
+Button.Size = UDim2.fromOffset(52, 52)
+Button.Position = UDim2.fromScale(0.05, 0.5)
+Button.BackgroundTransparency = 1
+Button.AutoButtonColor = false
+Button.BorderSizePixel = 0
+Button.Image = "rbxassetid://127239715511367"
+Button.ImageTransparency = 0
+Button.ScaleType = Enum.ScaleType.Fit
+Button.Parent = BtnGui
+
+Instance.new("UICorner", Button).CornerRadius = UDim.new(1, 0)
+
+local windowVisible = true
+Button.MouseButton1Click:Connect(function()
+    windowVisible = not windowVisible
+    pcall(function() Rayfield:SetVisibility(windowVisible) end)
+end)
+
+-- Drag system
+local dragging = false
+local dragOffset = Vector2.zero
+
+Button.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragOffset = UserInputService:GetMouseLocation() - Button.AbsolutePosition
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if not dragging then return end
+    local mouse = UserInputService:GetMouseLocation()
+    local target = mouse - dragOffset
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+    local sz = Button.AbsoluteSize
+    local cx = math.clamp(target.X, 0, vp.X - sz.X)
+    local cy = math.clamp(target.Y, 0, vp.Y - sz.Y)
+    Button.Position = UDim2.fromOffset(cx, cy)
+end)
+
+-- BAGIAN 13: TABS & UI ELEMENTS
+-- =====================================================
+local TabWebhook = Window:CreateTab("Webhook Logger", "webhook")
+local TabAutomation = Window:CreateTab("Automation", "bot")
+local TabExploit = Window:CreateTab("Exploits", "sword")
+local TabSettings = Window:CreateTab("Settings", "settings")
+
+-- =====================================================
+-- AUTOMATION TAB
+-- =====================================================
+TabAutomation:CreateSection("Auto Farm Options")
+TabAutomation:CreateToggle({
+    Name = "Auto Click Fishing",
+    CurrentValue = false,
+    Flag = "AutoClick",
+    Callback = function(Value) Settings.AutoClick = Value end
 })
-TI:CreateSection("📊 Stats")
-local SL2=TI:CreateParagraph({Title="Stats",Content="Loading..."})
-task.spawn(function()
-    while true do task.wait(3)
-        pcall(function()
-            local st=Stats()
-            if SL2 then SL2:Set({Title="📊 Stats",Content=string.format(
-                "💰 Coins: %s\n🐟 Caught: %s\n🎒 Backpack: %s/%s\n👥 Players: %d",
-                Fmt(st.C),Fmt(st.F),Fmt(st.B),st.BM>0 and Fmt(st.BM) or "?",#Players:GetPlayers()
-            )}) end
-        end)
-    end
-end)
-TI:CreateSection("Server")
-TI:CreateButton({Name="🔄 Rejoin",Callback=function()
-    pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId,LP) end)
-    Rayfield:Notify({Title="V",Content="Rejoining...",Duration=2})
-end})
-TI:CreateButton({Name="📋 Copy Game Link",Callback=function()
-    local l="https://www.roblox.com/games/"..game.PlaceId
-    pcall(function() setclipboard(l) end)
-    Rayfield:Notify({Title="V",Content="Copied!",Duration=2})
-end})
+TabAutomation:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = false,
+    Flag = "AntiAFK",
+    Callback = function(Value) Settings.AntiAFK = Value end
+})
+TabAutomation:CreateToggle({
+    Name = "Disable Popups (Small Notifications)",
+    CurrentValue = false,
+    Flag = "DisablePopups",
+    Callback = function(Value) Settings.DisablePopups = Value end
+})
 
--- ============================================================
--- TAB 2: FISHING
--- ============================================================
-local TF=Win:CreateTab("Fishing","fish")
-TF:CreateSection("🎣 Auto Fish")
-TF:CreateParagraph({Title="ℹ️ Info",Content="Simulasi mouse click untuk charge + reel.\nSesuai mekanik Fish It: charge = tahan klik, reel = spam klik."})
-TF:CreateToggle({Name="🎣 Auto Fish",CurrentValue=false,Flag="AF",Callback=function(v)
-    S.AFish=v
-    if v then StartFish();Rayfield:Notify({Title="V",Content="Auto Fish ON!",Duration=2})
-    else StopFish();Rayfield:Notify({Title="V",Content="Auto Fish OFF",Duration=2}) end
-end})
-TF:CreateSlider({Name="⏱️ Cast Delay",Range={0.05,2},Increment=0.05,Suffix="s",CurrentValue=0.08,Flag="FD",
-    Callback=function(v) S.FDelay=v end})
-TF:CreateSection("💰 Auto Sell")
-TF:CreateToggle({Name="💰 Auto Sell",CurrentValue=false,Flag="AS",Callback=function(v)
-    S.ASell=v
-    if v then StartSell();Rayfield:Notify({Title="V",Content="Auto Sell ON!",Duration=2})
-    else StopSell();Rayfield:Notify({Title="V",Content="Auto Sell OFF",Duration=2}) end
-end})
-TF:CreateSlider({Name="⏱️ Sell Interval",Range={1,30},Increment=1,Suffix="s",CurrentValue=5,Flag="SD",
-    Callback=function(v) S.SDelay=v end})
-TF:CreateButton({Name="💰 Sell Manual",Callback=function()
-    TrySell();Rayfield:Notify({Title="V",Content="Sell!",Duration=2})
-end})
-TF:CreateSection("📈 Session")
-local FStat=TF:CreateParagraph({Title="Session",Content="..."})
-task.spawn(function()
-    while true do task.wait(2)
-        pcall(function()
-            if FStat then FStat:Set({Title="📈 Session",Content=string.format(
-                "🐟 Logged: %d\n🎣 Fish: %s\n💰 Sell: %s",S.Logs,
-                S.AFish and "ON ✅" or "OFF ❌",S.ASell and "ON ✅" or "OFF ❌"
-            )}) end
-        end)
-    end
-end)
+TabAutomation:CreateSection("Server Monitoring")
+TabAutomation:CreateToggle({
+    Name = "Auto Reconnect on Disconnect",
+    CurrentValue = false,
+    Flag = "AutoReconnect",
+    Callback = function(Value) Settings.AutoReconnect = Value end
+})
+TabAutomation:CreateToggle({
+    Name = "High Ping Monitor Webhook",
+    CurrentValue = false,
+    Flag = "PingMonitor",
+    Callback = function(Value) Settings.PingMonitor = Value end
+})
 
--- ============================================================
--- TAB 3: TRADING
--- ============================================================
-local TT=Win:CreateTab("Trading","arrow-left-right")
-TT:CreateSection("Auto Trade")
-TT:CreateToggle({Name="✅ Auto Accept",CurrentValue=false,Flag="AA",Callback=function(v)
-    S.AAccept=v; if v then S.ADecline=false; StartTrade() end
-    Rayfield:Notify({Title="V",Content=v and "Accept ON!" or "Accept OFF",Duration=2})
-end})
-TT:CreateToggle({Name="❌ Auto Decline",CurrentValue=false,Flag="AD",Callback=function(v)
-    S.ADecline=v; if v then S.AAccept=false; StartTrade() end
-    Rayfield:Notify({Title="V",Content=v and "Decline ON!" or "Decline OFF",Duration=2})
-end})
-TT:CreateSection("Filter")
-TT:CreateDropdown({Name="🎯 Min Rarity",Options=RL,CurrentOption={"Legendary"},MultipleOptions=false,Flag="TR",
-    Callback=function(o) S.TRarity=RT[o] or 5;Rayfield:Notify({Title="V",Content="Min: "..o,Duration=2}) end})
-TT:CreateSection("Log")
-TT:CreateToggle({Name="📤 Log Trade → Webhook",CurrentValue=false,Flag="TL",Callback=function(v)
-    S.TLog=v; if v then StartTrade() end
-    Rayfield:Notify({Title="V",Content=v and "Trade log ON!" or "Trade log OFF",Duration=2})
-end})
-TT:CreateParagraph({Title="ℹ️ Info",Content="Accept: terima jika item >= Min Rarity.\nDecline: tolak semua.\nLog: kirim detail trade ke webhook.\nPastikan URL webhook diisi."})
+-- =====================================================
+-- EXPLOIT TAB
+-- =====================================================
+TabExploit:CreateSection("⚠️ Use at your own risk")
 
--- ============================================================
--- TAB 4: TELEPORT
--- ============================================================
-local TP=Win:CreateTab("Teleport","map-pin")
-local Islands={};local IsNames={}
-local function RefreshIslands2()
-    Islands=ScanIslands()
-    IsNames={}; for _,l in ipairs(Islands) do table.insert(IsNames,l.Name) end
-    if #IsNames==0 then IsNames={"(kosong)"} end
-end
-RefreshIslands2()
+local teleportLocations = {
+    ["🏝️ Fisherman Island"] = Vector3.new(13.06, 24.53, 2911.16),
+    ["🏝️ Tropical Grove"] = Vector3.new(-2092.897, 6.268, 3693.929),
+    ["🏝️ Coral Reefs"] = Vector3.new(-2949.359, 63.25, 2213.966),
+    ["🏝️ Crater Island"] = Vector3.new(1012.045, 22.676, 5080.221),
+    ["🏝️ Kohana"] = Vector3.new(-643.14, 16.03, 623.61),
+    ["🏝️ Kohana Lava"] = Vector3.new(-593.32, 59.0, 130.82),
+    ["🏝️ Ice Island"] = Vector3.new(1766.46, 19.16, 3086.23),
+    ["🏝️ Lost Isle"] = Vector3.new(-3660.07, 5.426, -1053.02),
+    ["⛩️ Sacred Temple"] = Vector3.new(1476.232, -21.850, -630.892),
+    ["⛩️ Ancient Jungle"] = Vector3.new(1281.761, 7.791, -202.018),
+    ["⛩️ Esoteric Depths"] = Vector3.new(2024.49, 27.397, 1391.62),
+    ["⚙️ Weather Machine"] = Vector3.new(-1495.25, 6.5, 1889.92),
+    ["🗿 Sisyphus Statue"] = Vector3.new(-3693.96, -135.57, -1027.28),
+    ["💎 Treasure Hall"] = Vector3.new(-3598.39, -275.82, -1641.46),
+    ["🔄 Enchant Area"] = Vector3.new(3236.12, -1302.855, 1399.491),
+}
+local teleportNames = {}
+for name, _ in pairs(teleportLocations) do table.insert(teleportNames, name) end
+table.sort(teleportNames)
 
-TP:CreateSection("Island")
-TP:CreateParagraph({Title="ℹ️ Info",Content="Script scan Workspace otomatis.\nKlik Refresh jika island tidak muncul."})
-TP:CreateButton({Name="🔄 Refresh List",Callback=function()
-    RefreshIslands2()
-    Rayfield:Notify({Title="V",Content=string.format("Ditemukan %d lokasi",#Islands),Duration=2})
-end})
-local SelI=IsNames[1]
-TP:CreateDropdown({Name="📍 Select Island",Options=IsNames,CurrentOption={IsNames[1]},MultipleOptions=false,Flag="TPI",
-    Callback=function(o) SelI=o end})
-TP:CreateButton({Name="🚀 Teleport → Island",Callback=function()
-    RefreshIslands2()
-    for _,l in ipairs(Islands) do
-        if l.Name==SelI then
-            SafeTP(l.Pos,function(ok)
-                Rayfield:Notify({Title="V",Content=ok and("✅ "..l.Name) or "❌ Gagal!",Duration=3})
-            end); return
+TabExploit:CreateDropdown({
+    Name = "Instant Teleport",
+    Options = teleportNames,
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Flag = "Teleporter",
+    Callback = function(Option)
+        if Option[1] and Option[1] ~= "" then
+            local pos = teleportLocations[Option[1]]
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and pos then
+                hrp.CFrame = CFrame.new(pos)
+                Rayfield:Notify({ Title = "Teleported", Content = "Berhasil teleport ke " .. Option[1], Duration = 2 })
+            end
         end
     end
-    Rayfield:Notify({Title="V",Content="Klik Refresh dulu!",Duration=3})
-end})
+})
 
-TP:CreateSection("Player")
-local PlrNames={}
-local function RefreshPL()
-    PlrNames={}
-    for _,p in pairs(Players:GetPlayers()) do
-        if p~=LP then table.insert(PlrNames,p.Name) end
-    end
-    if #PlrNames==0 then PlrNames={"(tidak ada)"} end
-end
-RefreshPL()
-Players.PlayerAdded:Connect(function() task.wait(0.3);RefreshPL() end)
-Players.PlayerRemoving:Connect(function() task.wait(0.5);RefreshPL() end)
+TabExploit:CreateSection("Fishing Mods")
 
-TP:CreateButton({Name="🔄 Refresh Players",Callback=function()
-    RefreshPL()
-    Rayfield:Notify({Title="V",Content=string.format("%d players",#PlrNames),Duration=2})
-end})
-local SelP=PlrNames[1]
-TP:CreateDropdown({Name="👥 Select Player",Options=PlrNames,CurrentOption={PlrNames[1]},MultipleOptions=false,Flag="TPP",
-    Callback=function(o) SelP=o end})
-TP:CreateButton({Name="🚀 Teleport → Player",Callback=function()
-    RefreshPL()
-    local tgt=Players:FindFirstChild(SelP)
-    if not tgt then
-        for _,p in pairs(Players:GetPlayers()) do
-            if p.DisplayName==SelP then tgt=p;break end
+TabExploit:CreateToggle({
+    Name = "Instant Catch (No Minigame)",
+    CurrentValue = false,
+    Flag = "InstantCatch",
+    Callback = function(Value) Settings.InstantCatch = Value end
+})
+
+TabExploit:CreateToggle({
+    Name = "Auto Sell All (Every 30s)",
+    CurrentValue = false,
+    Flag = "AutoSellAll",
+    Callback = function(Value) Settings.AutoSellAll = Value end
+})
+
+-- -- RARITY FILTER --
+TabWebhook:CreateSection("Rarity Filter")
+
+TabWebhook:CreateDropdown({
+    Name = "Filter by Rarity",
+    Options = RarityList,
+    CurrentOption = {},
+    MultipleOptions = true,
+    Flag = "RarityFilter",
+    Callback = function(Options)
+        Settings.SelectedRarities = {}
+
+        for _, value in ipairs(Options or {}) do
+            if type(value) == "string" then
+                local tier = RARITY_NAME_TO_TIER[value]
+                if tier then Settings.SelectedRarities[tier] = true end
+            end
+        end
+
+        if next(Settings.SelectedRarities) == nil then
+            Rayfield:Notify({ Title = "Vechnost", Content = "Filter: Semua rarity", Duration = 2 })
+        else
+            Rayfield:Notify({ Title = "Vechnost", Content = "Filter rarity diperbarui", Duration = 2 })
         end
     end
-    if not tgt then Rayfield:Notify({Title="V",Content="Player tidak ada!",Duration=3});return end
-    if not tgt.Character or not tgt.Character:FindFirstChild("HumanoidRootPart") then
-        Rayfield:Notify({Title="V",Content=tgt.Name.." tidak punya karakter!",Duration=3});return
-    end
-    SafeTP(tgt.Character.HumanoidRootPart.Position+Vector3.new(3,2,3),function(ok)
-        Rayfield:Notify({Title="V",Content=ok and("✅ "..tgt.Name) or "❌ Gagal!",Duration=3})
-    end)
-end})
-TP:CreateButton({Name="🎲 Random Player",Callback=function()
-    local list={}
-    for _,p in pairs(Players:GetPlayers()) do if p~=LP then table.insert(list,p) end end
-    if #list==0 then Rayfield:Notify({Title="V",Content="Tidak ada player!",Duration=2});return end
-    local t=list[math.random(1,#list)]
-    if not t.Character or not t.Character:FindFirstChild("HumanoidRootPart") then
-        Rayfield:Notify({Title="V",Content=t.Name.." tidak punya karakter!",Duration=2});return
-    end
-    SafeTP(t.Character.HumanoidRootPart.Position+Vector3.new(3,2,3),function(ok)
-        Rayfield:Notify({Title="V",Content=ok and("✅ "..t.Name) or "❌ Gagal!",Duration=2})
-    end)
-end})
-TP:CreateSection("Respawn")
-TP:CreateButton({Name="🏠 Respawn ke Spawn",Callback=function()
-    local c=LP.Character
-    if c then local h=c:FindFirstChildOfClass("Humanoid"); if h then h.Health=0 end end
-    Rayfield:Notify({Title="V",Content="Respawning...",Duration=2})
-end})
+})
 
--- ============================================================
--- TAB 5: WEBHOOK
--- ============================================================
-local TW=Win:CreateTab("Webhook","webhook")
-TW:CreateSection("Rarity Filter")
-TW:CreateDropdown({Name="🎯 Filter Rarity",Options=RL,CurrentOption={},MultipleOptions=true,Flag="RF",
-    Callback=function(opts)
-        S.Rarities={}
-        for _,v in ipairs(opts or {}) do local t=RT[v]; if t then S.Rarities[t]=true end end
-        Rayfield:Notify({Title="V",Content=next(S.Rarities)==nil and "Semua rarity" or "Filter updated",Duration=2})
-    end})
-TW:CreateSection("Setup")
-local WUB=""
-TW:CreateInput({Name="Webhook URL",CurrentValue="",PlaceholderText="https://discord.com/api/webhooks/...",
-    RemoveTextAfterFocusLost=false,Flag="WU",Callback=function(t) WUB=tostring(t) end})
-TW:CreateButton({Name="💾 Save URL",Callback=function()
-    local u=WUB:gsub("%s+","")
-    if not u:match("^https://discord%.com/api/webhooks/") and not u:match("^https://canary%.discord%.com/api/webhooks/") then
-        Rayfield:Notify({Title="V",Content="URL tidak valid!",Duration=3});return
+TabWebhook:CreateToggle({
+    Name = "Log Player Join",
+    CurrentValue = false,
+    Flag = "LogPlayerJoin",
+    Callback = function(Value) Settings.LogPlayerJoin = Value end
+})
+
+TabWebhook:CreateToggle({
+    Name = "Log Player Leave",
+    CurrentValue = false,
+    Flag = "LogPlayerLeave",
+    Callback = function(Value) Settings.LogPlayerLeave = Value end
+})
+
+-- -- WEBHOOK URL --
+TabWebhook:CreateSection("Setup Webhook")
+
+local WebhookUrlBuffer = ""
+
+TabWebhook:CreateInput({
+    Name = "Discord Webhook URL",
+    CurrentValue = "",
+    PlaceholderText = "https://discord.com/api/webhooks/...",
+    RemoveTextAfterFocusLost = false,
+    Flag = "WebhookUrl",
+    Callback = function(Text)
+        WebhookUrlBuffer = tostring(Text)
     end
-    S.Url=u;Rayfield:Notify({Title="V",Content="✅ Saved!",Duration=2})
-end})
-TW:CreateSection("Mode")
-TW:CreateToggle({Name="🌐 Server-Wide Mode",CurrentValue=true,Flag="SM",Callback=function(v)
-    S.Wide=v;Rayfield:Notify({Title="V",Content=v and "Server-Wide" or "Local Only",Duration=2})
-end})
-TW:CreateSection("Control")
-TW:CreateToggle({Name="✅ Enable Logger",CurrentValue=false,Flag="LE",Callback=function(v)
-    if v then
-        if S.Url=="" then Rayfield:Notify({Title="V",Content="Isi URL dulu!",Duration=3});return end
-        StartLogger();Rayfield:Notify({Title="V",Content="🟢 Logger ON!",Duration=2})
-    else StopLogger();Rayfield:Notify({Title="V",Content="🔴 Logger OFF",Duration=2}) end
-end})
-local WS2=TW:CreateParagraph({Title="Status",Content="Offline"})
+})
+
+TabWebhook:CreateButton({
+    Name = "Save Webhook URL",
+    Callback = function()
+        local url = WebhookUrlBuffer:gsub("%s+", "")
+
+        if not url:match("^https://discord.com/api/webhooks/")
+        and not url:match("^https://canary.discord.com/api/webhooks/") then
+            Rayfield:Notify({ Title = "Vechnost", Content = "URL webhook tidak valid!", Duration = 3 })
+            return
+        end
+
+        Settings.Url = url
+        Rayfield:Notify({ Title = "Vechnost", Content = "Webhook URL saved!", Duration = 2 })
+    end
+})
+
+-- -- MODE --
+TabWebhook:CreateSection("Logger Mode")
+
+TabWebhook:CreateToggle({
+    Name = "Server-Notifier Mode",
+    CurrentValue = true,
+    Flag = "ServerNotifierMode",
+    Callback = function(Value)
+        Settings.ServerWide = Value
+        Rayfield:Notify({
+            Title = "Vechnost",
+            Content = Value and "Mode: Seluruh Server" or "Mode: Hanya Lokal",
+            Duration = 2
+        })
+    end
+})
+
+-- -- CONTROL --
+TabWebhook:CreateSection("Control")
+
+TabWebhook:CreateToggle({
+    Name = "Enable Webhook Logger",
+    CurrentValue = false,
+    Flag = "LoggerEnabled",
+    Callback = function(Value)
+        if Value then
+            if Settings.Url == "" then
+                Rayfield:Notify({ Title = "Vechnost", Content = "Isi webhook URL dulu!", Duration = 3 })
+                return
+            end
+            StartLogger()
+            Rayfield:Notify({ Title = "Vechnost", Content = "Notifier Aktif!", Duration = 2 })
+        else
+            StopLogger()
+            Rayfield:Notify({ Title = "Vechnost", Content = "Notifier Berhenti", Duration = 2 })
+        end
+    end
+})
+
+-- -- STATUS --
+local StatusLabel = TabWebhook:CreateParagraph({
+    Title = "Vechnost Status",
+    Content = "Status: Offline"
+})
+
 task.spawn(function()
-    while true do task.wait(2)
-        pcall(function()
-            if WS2 then WS2:Set({Title="📡 Status",Content=S.Active and
-                string.format("🟢 Aktif\nMode: %s\nLogged: %d\nURL: %s",
-                    S.Wide and "Server-Wide" or "Local",S.Logs,S.Url~="" and "✅" or "❌") or
-                ("🔴 Offline\nURL: "..(S.Url~="" and "✅" or "❌"))
-            }) end
-        end)
+    while true do
+        task.wait(2)
+        if StatusLabel then
+            pcall(function()
+                if Settings.Active then
+                    StatusLabel:Set({
+                        Title = "Notifier Status",
+                        Content = string.format(
+                            "Status: Aktif\nMode: %s\nTotal Log: %d ikan",
+                            Settings.ServerWide and "Server-Notifier" or "Local Only",
+                            Settings.LogCount
+                        )
+                    })
+                else
+                    StatusLabel:Set({
+                        Title = "Notifier Status",
+                        Content = "Status: Offline"
+                    })
+                end
+            end)
+        end
     end
 end)
-TW:CreateSection("Test")
-TW:CreateButton({Name="🧪 Test Webhook",Callback=function()
-    if S.Url=="" then Rayfield:Notify({Title="V",Content="Isi URL dulu!",Duration=3});return end
-    task.spawn(function() SendWH(WH_Test(LP.Name)) end)
-    Rayfield:Notify({Title="V",Content="Test terkirim!",Duration=2})
-end})
-TW:CreateButton({Name="🔄 Reset Counter",Callback=function()
-    S.Logs=0;S.SentUID={}
-    Rayfield:Notify({Title="V",Content="Counter reset!",Duration=2})
-end})
 
--- ============================================================
--- TAB 6: CONFIG
--- ============================================================
-local TC2=Win:CreateTab("Config","settings")
-TC2:CreateSection("Movement")
-TC2:CreateSlider({Name="🏃 Walk Speed",Range={16,300},Increment=1,Suffix="",CurrentValue=16,Flag="WS",
-    Callback=function(v) S.Speed=v;ApplySpeed(v) end})
-TC2:CreateSlider({Name="🦘 Jump Power",Range={50,300},Increment=5,Suffix="",CurrentValue=50,Flag="JP",
-    Callback=function(v) S.Jump=v;ApplyJump(v) end})
-TC2:CreateToggle({Name="♾️ Infinite Jump",CurrentValue=false,Flag="IJ",Callback=function(v)
-    S.InfJ=v
-    if v then StartIJ();Rayfield:Notify({Title="V",Content="Inf Jump ON!",Duration=2})
-    else StopIJ();Rayfield:Notify({Title="V",Content="Inf Jump OFF",Duration=2}) end
-end})
-TC2:CreateButton({Name="🔄 Reset Speed/Jump",Callback=function()
-    S.Speed=16;S.Jump=50;ApplySpeed(16);ApplyJump(50)
-    Rayfield:Notify({Title="V",Content="Reset!",Duration=2})
-end})
-TC2:CreateSection("Utility")
-TC2:CreateToggle({Name="🤖 Anti-AFK",CurrentValue=false,Flag="AAFK",Callback=function(v)
-    S.AAFK=v
-    if v then StartAFK();Rayfield:Notify({Title="V",Content="Anti-AFK ON!",Duration=2})
-    else StopAFK();Rayfield:Notify({Title="V",Content="Anti-AFK OFF",Duration=2}) end
-end})
-TC2:CreateToggle({Name="👁️ Player ESP",CurrentValue=false,Flag="ESP",Callback=function(v)
-    S.ESP=v
-    if v then StartESP();Rayfield:Notify({Title="V",Content="ESP ON!",Duration=2})
-    else StopESP();Rayfield:Notify({Title="V",Content="ESP OFF",Duration=2}) end
-end})
-TC2:CreateToggle({Name="🌙 Remove Fog",CurrentValue=false,Flag="RF2",Callback=function(v)
-    S.Fog=v
-    pcall(function()
-        local L=game:GetService("Lighting")
-        if v then L.FogEnd=100000;L.FogStart=99999
-        else L.FogEnd=100000;L.FogStart=0 end
-    end)
-    Rayfield:Notify({Title="V",Content=v and "Fog OFF!" or "Fog restored",Duration=2})
-end})
-TC2:CreateSection("Anti-Detect v2.2")
-TC2:CreateParagraph({Title="🛡️ Metode Bypass CODE-BAC",Content=
-    "✅ protect_gui / gethui() — GUI tidak masuk CoreGui scan\n"..
-    "✅ hookmetamethod spoof WalkSpeed/JumpPower ke server\n"..
-    "✅ 0 warn() — tidak ada console fingerprint\n"..
-    "✅ HttpGet delay 1s sebelum load Rayfield\n"..
-    "✅ Nama GUI acak (_TAG internal)\n"..
-    "✅ Teleport 4-step, bukan langsung\n"..
-    "✅ Anti-AFK random interval 55–85s\n"..
-    "✅ Auto Fish via VIM (bukan RemoteFire)\n\n"..
-    "⚠️ Selalu gunakan Private Server!"
+-- -- SETTINGS TAB --
+TabSettings:CreateSection("Tentang")
+
+TabSettings:CreateParagraph({
+    Title = "Vechnost Webhook Notifier",
+    Content = "Version 2.0.0\nServer-Notifier Fish Catch Logger\nLog ikan dari semua player di server\nAutomation + Exploit Tools\n\nby Vechnost"
 })
-TC2:CreateButton({Name="💾 Save Config",Callback=function()
-    Rayfield:Notify({Title="V",Content="Saved!",Duration=2})
-end})
-TC2:CreateButton({Name="🗑️ Reset Config",Callback=function()
-    pcall(function() Rayfield:ClearConfiguration() end)
-    Rayfield:Notify({Title="V",Content="Reset! Restart script.",Duration=3})
-end})
-TC2:CreateParagraph({Title="Vechnost Hub v2.2",Content="by Vechnost\ndiscord.gg/vechnost"})
 
--- ============================================================
--- INIT
--- ============================================================
+TabSettings:CreateSection("Testing")
+
+TabSettings:CreateButton({
+    Name = "Test Webhook",
+    Callback = function()
+        if Settings.Url == "" then
+            Rayfield:Notify({ Title = "Vechnost", Content = "Isi webhook URL dulu!", Duration = 3 })
+            return
+        end
+
+        task.spawn(function()
+            SendWebhook(BuildTestPayload(LocalPlayer.Name))
+        end)
+
+        Rayfield:Notify({ Title = "Vechnost", Content = "Test message terkirim!", Duration = 2 })
+    end
+})
+
+TabSettings:CreateButton({
+    Name = "Reset Log Counter",
+    Callback = function()
+        Settings.LogCount = 0
+        Settings.SentUUID = {}
+        Rayfield:Notify({ Title = "Vechnost", Content = "Counter di-reset!", Duration = 2 })
+    end
+})
+
+-- =====================================================
+-- BAGIAN 14: INIT
+-- =====================================================
 Rayfield:LoadConfiguration()
+warn("[Vechnost] Webhook Logger v1.0 Loaded!")
+warn("[Vechnost] Toggle GUI: tekan V atau tap tombol floating")
