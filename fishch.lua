@@ -1,743 +1,909 @@
--- ============================================================
---  Fisch Script | Fluent UI
---  Game  : Fisch (Roblox) - 2026 Updates (Tidefall, Scoria Reach, Lost Jungle)
---  GUI   : https://github.com/dawid-scripts/Fluent
---  Fixed : AddSection takes plain string (not table)
--- ============================================================
+-- Craft A World Auto Script with Fluent UI
+-- Game: Craft A World (Roblox) - Growtopia-inspired 2D Sandbox MMO
+-- WARNING: Using this script may result in account suspension/ban
+-- Use at your own risk for educational purposes only
 
-local Fluent         = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local SaveManager    = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
--- ============================================================
---  Services
--- ============================================================
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
+-- Services
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
 
-local LocalPlayer  = Players.LocalPlayer
+-- Variables
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local hrp = character:WaitForChild("HumanoidRootPart")
 
-local function GetChar()
-    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-end
-local function GetRoot()
-    local c = GetChar()
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
+-- Re-reference on character respawn
+player.CharacterAdded:Connect(function(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    hrp = char:WaitForChild("HumanoidRootPart")
+end)
 
--- ============================================================
---  Remote Helpers
--- ============================================================
-local RS = game:GetService("ReplicatedStorage")
+-- Script State
+local scriptState = {
+    -- Farming
+    autoBreak = false,
+    autoPlace = false,
+    autoPlant = false,
+    autoCollectDrops = false,
+    farmDelay = 0.1,
+    breakOffsetX = 0,
+    breakOffsetY = 0,
+    placeOffsetX = 0,
+    placeOffsetY = 1,
+    selectedBlock = "Dirt",
+    selectedSapling = "Dirt Sapling",
 
-local function WaitForRemote(name, timeout)
-    timeout = timeout or 3
-    local t = 0
-    while t < timeout do
-        local r = RS:FindFirstChild(name, true)
-        if r then return r end
-        task.wait(0.1)
-        t += 0.1
-    end
-    return nil
-end
+    -- Crafting
+    autoCraft = false,
+    craftIngredient1 = "Dirt",
+    craftIngredient2 = "Water",
+    craftAmount = 1,
+    craftDelay = 0.5,
 
-local function FireRemote(name, ...)
-    local r = WaitForRemote(name, 1)
-    if r and r:IsA("RemoteEvent") then
-        pcall(function() r:FireServer(...) end)
-    end
-end
+    -- Player
+    walkSpeed = 16,
+    jumpPower = 50,
+    noClip = false,
+    infiniteJump = false,
+    antiKick = false,
+    autoRespawn = false,
 
--- ============================================================
---  State
--- ============================================================
-local State = {
-    AutoCast          = false,
-    AutoShake         = false,
-    AutoReel          = false,
-    InstantBobber     = false,
-    CenterShake       = false,
-    AlwaysProgressing = false,
-    AntiProgressLoss  = false,
-    SuperBoat         = false,
-    BoatSpeed         = 60,
-    SellOnCatch       = false,
-    AutoSell          = false,
-    AutoSellDelay     = 5,
-    AutoCollectStar   = false,
-    ShowRadar         = false,
-    AntiOxygen        = false,
-    AntiTemperature   = false,
-    AntiPressure      = false,
-    SelectedRod       = "Flimsy Rod",
-    SelectedCrate     = "Common Crate",
-    SelectedTotem     = "Luck Totem",
-    BuyCrateAmount    = 1,
-    BuyTotemAmount    = 1,
-    SelectedTeleport  = "Spawn Island",
-    lastSellTime      = os.clock(),
-    progressCache     = 0,
+    -- ESP
+    blockESP = false,
+    playerESP = false,
+    dropESP = false,
+    espFillColor = Color3.fromRGB(255, 0, 0),
+    espTextColor = Color3.fromRGB(255, 255, 255),
+
+    -- Gems
+    autoGemFarm = false,
+    gemFarmDelay = 0.3,
+
+    -- Misc
+    showStatus = true,
+    selectedWorld = "",
 }
 
--- ============================================================
---  Data Lists (Updated 2026)
--- ============================================================
-local RodList = {
-    "Flimsy Rod", "Old Rod", "Basic Rod", "Travelers Rod",
-    "Trusty Rod", "Hardy Rod", "Lucky Rod", "Oceanic Rod",
-    "Storm Rod", "Deep Rod", "Abyss Rod", "Lunar Rod",
-    "Masterline Rod",  -- Feb 2026: fishes any liquid
-    "Tidefall Rod",    -- Jan 2026 Tidefall update
-    "Volcanic Rod",    -- Feb 15 2026 Scoria Reach
-    "Jungle Rod",      -- Mar 7 2026 Lost Jungle
-    "Toxic Rod",       -- Mar 7 2026 Toxic Grove (Lost Jungle Expansion)
-    "Ancient Rod", "Celestial Rod", "Astraeus Rod",
-}
-
-local CrateList = {
-    "Common Crate", "Uncommon Crate", "Rare Crate",
-    "Epic Crate", "Legendary Crate", "Mythic Crate",
-    "Tidefall Crate", "Volcanic Crate", "Jungle Crate",
-}
-
-local TotemList = {
-    "Luck Totem", "Speed Totem", "Rare Totem", "Double Totem",
-    "Epic Totem", "Legendary Totem", "Hunt Totem", "Mythic Totem",
-}
-
--- 2026 locations
-local TeleportLocations = {
-    ["Spawn Island"]    = Vector3.new(0,    5,   0),
-    ["Moosewood"]       = Vector3.new(478,  5,   134),
-    ["Roslit Bay"]      = Vector3.new(-350, 5,   280),
-    ["Forsaken Shores"] = Vector3.new(820,  5,  -400),
-    ["Deep Sea"]        = Vector3.new(-620, 5,   580),
-    ["Tidefall"]        = Vector3.new(1100, -40, 200),  -- Jan 2026 underwater
-    ["Scoria Reach"]    = Vector3.new(-900, 5,  -700),  -- Feb 2026 lava island
-    ["Lost Jungle"]     = Vector3.new(700,  5,   900),  -- Mar 2026
-    ["Toxic Grove"]     = Vector3.new(720,  5,   980),  -- Mar 7 2026 expansion
-    ["Trade Plaza"]     = Vector3.new(50,   5,   250),
-    ["Star Crater"]     = Vector3.new(-100, 5,  -600),
-}
-
-local TeleportNames = {}
-for k in pairs(TeleportLocations) do table.insert(TeleportNames, k) end
-table.sort(TeleportNames)
-
--- ============================================================
---  Window
--- ============================================================
+-- ==============================
+-- CREATE WINDOW
+-- ==============================
 local Window = Fluent:CreateWindow({
-    Title       = "Fisch Script",
-    SubTitle    = "2026 Edition - Lost Jungle Ready",
-    TabWidth    = 160,
-    Size        = UDim2.fromOffset(620, 490),
-    Acrylic     = true,
-    Theme       = "Dark",
-    MinimizeKey = Enum.KeyCode.RightControl,
+    Title = "Craft A World Script v1.0",
+    SubTitle = "Sandbox MMO Automation",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(600, 480),
+    Acrylic = true,
+    Theme = "Darker",
+    MinimizeKey = Enum.KeyCode.RightControl
 })
 
-local Tabs = {
-    Fishing   = Window:AddTab({ Title = "Fishing",   Icon = "fish" }),
-    Utilities = Window:AddTab({ Title = "Utilities", Icon = "wrench" }),
-    Teleports = Window:AddTab({ Title = "Teleports", Icon = "map-pin" }),
-    Settings  = Window:AddTab({ Title = "Settings",  Icon = "settings" }),
-}
+-- ==============================
+-- TABS
+-- ==============================
+local FarmingTab   = Window:AddTab({ Title = "Farming",   Icon = "🌱" })
+local CraftingTab  = Window:AddTab({ Title = "Crafting",  Icon = "⚒️" })
+local PlayerTab    = Window:AddTab({ Title = "Player",    Icon = "🧍" })
+local ESPTab       = Window:AddTab({ Title = "ESP",       Icon = "👁️" })
+local WorldTab     = Window:AddTab({ Title = "World",     Icon = "🌍" })
+local MiscTab      = Window:AddTab({ Title = "Misc",      Icon = "⚙️" })
 
-local Options = Fluent.Options
+-- ==============================
+-- FARMING TAB
+-- ==============================
 
--- ============================================================
---  FISHING TAB
--- ============================================================
-
--- FIX: AddSection harus menerima STRING bukan table {}
-Tabs.Fishing:AddSection("Automation")
-
-Tabs.Fishing:AddToggle("AutoCast", {
-    Title       = "Auto Cast",
-    Description = "Otomatis melempar kail ketika idle.",
-    Default     = false,
-    Callback    = function(v) State.AutoCast = v end,
+-- Status Info
+local FarmStatusSection = FarmingTab:AddSection("Status")
+local FarmStatusParagraph = FarmStatusSection:AddParagraph({
+    Title = "Farm Status",
+    Content = "Idle - No automation running"
 })
 
-Tabs.Fishing:AddToggle("AutoShake", {
-    Title       = "Auto Shake",
-    Description = "Otomatis handle minigame shake/bobber.",
-    Default     = false,
-    Callback    = function(v) State.AutoShake = v end,
+-- Auto Break
+local AutoBreakSection = FarmingTab:AddSection("Auto Break (Punch Blocks)")
+
+local AutoBreakToggle = AutoBreakSection:AddToggle("AutoBreak", {
+    Title = "Auto Break Blocks",
+    Description = "Automatically punches/breaks blocks to collect saplings & gems",
+    Default = false
+})
+AutoBreakToggle:OnChanged(function(v)
+    scriptState.autoBreak = v
+    FarmStatusParagraph:SetDesc(v and "Auto Break is ACTIVE" or "Idle")
+end)
+
+local BreakOffsetXSlider = AutoBreakSection:AddSlider("BreakOffsetX", {
+    Title = "Break Target Offset X",
+    Description = "Horizontal offset from player position to break block",
+    Default = 0, Min = -10, Max = 10, Rounding = 1
+})
+BreakOffsetXSlider:OnChanged(function(v) scriptState.breakOffsetX = v end)
+
+local BreakOffsetYSlider = AutoBreakSection:AddSlider("BreakOffsetY", {
+    Title = "Break Target Offset Y",
+    Description = "Vertical offset from player position to break block",
+    Default = 0, Min = -5, Max = 5, Rounding = 1
+})
+BreakOffsetYSlider:OnChanged(function(v) scriptState.breakOffsetY = v end)
+
+-- Auto Place
+local AutoPlaceSection = FarmingTab:AddSection("Auto Place (Build Blocks)")
+
+local BlockDropdown = AutoPlaceSection:AddDropdown("SelectBlock", {
+    Title = "Select Block to Place",
+    Values = {
+        "Dirt", "Grass", "Stone", "Sand", "Lava", "Water",
+        "Wooden Block", "Wooden BG", "Concrete", "Glass Pane",
+        "Blue Block", "Red Block", "Green Block", "Yellow Block",
+        "Dark Block", "White Block", "Purple Block", "Pink Block",
+        "Orange Block", "Cyan Block"
+    },
+    Multi = false,
+    Default = "Dirt"
+})
+BlockDropdown:OnChanged(function(v) scriptState.selectedBlock = v end)
+
+local AutoPlaceToggle = AutoPlaceSection:AddToggle("AutoPlace", {
+    Title = "Auto Place Blocks",
+    Description = "Automatically places selected block at offset position",
+    Default = false
+})
+AutoPlaceToggle:OnChanged(function(v) scriptState.autoPlace = v end)
+
+local PlaceOffsetXSlider = AutoPlaceSection:AddSlider("PlaceOffsetX", {
+    Title = "Place Target Offset X",
+    Description = "Horizontal offset for block placement",
+    Default = 0, Min = -10, Max = 10, Rounding = 1
+})
+PlaceOffsetXSlider:OnChanged(function(v) scriptState.placeOffsetX = v end)
+
+local PlaceOffsetYSlider = AutoPlaceSection:AddSlider("PlaceOffsetY", {
+    Title = "Place Target Offset Y",
+    Description = "Vertical offset for block placement",
+    Default = 1, Min = -5, Max = 5, Rounding = 1
+})
+PlaceOffsetYSlider:OnChanged(function(v) scriptState.placeOffsetY = v end)
+
+-- Auto Plant Sapling
+local AutoPlantSection = FarmingTab:AddSection("Auto Plant Sapling")
+
+local SaplingDropdown = AutoPlantSection:AddDropdown("SelectSapling", {
+    Title = "Select Sapling to Plant",
+    Values = {
+        "Dirt Sapling", "Grass Sapling", "Stone Sapling", "Sand Sapling",
+        "Lava Sapling", "Water Sapling", "Tree Sapling", "Flower Sapling",
+        "Mushroom Sapling", "Cactus Sapling", "Sunflower Sapling",
+        "Blue Sapling", "Purple Sapling", "Crystal Sapling"
+    },
+    Multi = false,
+    Default = "Dirt Sapling"
+})
+SaplingDropdown:OnChanged(function(v) scriptState.selectedSapling = v end)
+
+local AutoPlantToggle = AutoPlantSection:AddToggle("AutoPlant", {
+    Title = "Auto Plant Sapling",
+    Description = "Automatically plants selected sapling on empty tiles",
+    Default = false
+})
+AutoPlantToggle:OnChanged(function(v) scriptState.autoPlant = v end)
+
+-- Auto Collect Drops
+local AutoCollectSection = FarmingTab:AddSection("Auto Collect")
+
+local AutoCollectToggle = AutoCollectSection:AddToggle("AutoCollect", {
+    Title = "Auto Collect Item Drops",
+    Description = "Automatically walks to and collects item drops on the ground",
+    Default = false
+})
+AutoCollectToggle:OnChanged(function(v) scriptState.autoCollectDrops = v end)
+
+local AutoGemFarmToggle = AutoCollectSection:AddToggle("AutoGemFarm", {
+    Title = "Auto Gem Farm",
+    Description = "Breaks blocks in sequence to maximize gem collection",
+    Default = false
+})
+AutoGemFarmToggle:OnChanged(function(v) scriptState.autoGemFarm = v end)
+
+local FarmDelaySlider = AutoCollectSection:AddSlider("FarmDelay", {
+    Title = "Farm Action Delay (seconds)",
+    Description = "Delay between each automated farm action",
+    Default = 0.1, Min = 0.05, Max = 2.0, Rounding = 2
+})
+FarmDelaySlider:OnChanged(function(v) scriptState.farmDelay = v end)
+
+-- ==============================
+-- CRAFTING TAB
+-- ==============================
+
+local CraftInfoSection = CraftingTab:AddSection("Craft Info")
+local CraftStatusPara = CraftInfoSection:AddParagraph({
+    Title = "Craft A World - Crafting Info",
+    Content = "Every recipe uses exactly 2 ingredients.\nStand near a Crafting Station to craft items."
 })
 
-Tabs.Fishing:AddToggle("AutoReel", {
-    Title       = "Auto Reel",
-    Description = "Otomatis menarik ikan setelah bobber bergetar.",
-    Default     = false,
-    Callback    = function(v) State.AutoReel = v end,
+local AutoCraftSection = CraftingTab:AddSection("Auto Craft")
+
+local CraftIngredient1Dropdown = AutoCraftSection:AddDropdown("CraftIngredient1", {
+    Title = "Ingredient 1",
+    Values = {
+        "Dirt", "Grass", "Stone", "Sand", "Lava", "Water", "Seed",
+        "Wooden Block", "Wooden BG", "Concrete", "Glass Pane",
+        "Blue", "Red", "Green", "Yellow", "Dark", "White", "Purple",
+        "Sunflower", "Cactus", "Mushroom", "Crystal", "Coal", "Iron",
+        "Gold", "Diamond"
+    },
+    Multi = false,
+    Default = "Dirt"
+})
+CraftIngredient1Dropdown:OnChanged(function(v) scriptState.craftIngredient1 = v end)
+
+local CraftIngredient2Dropdown = AutoCraftSection:AddDropdown("CraftIngredient2", {
+    Title = "Ingredient 2",
+    Values = {
+        "Dirt", "Grass", "Stone", "Sand", "Lava", "Water", "Seed",
+        "Wooden Block", "Wooden BG", "Concrete", "Glass Pane",
+        "Blue", "Red", "Green", "Yellow", "Dark", "White", "Purple",
+        "Sunflower", "Cactus", "Mushroom", "Crystal", "Coal", "Iron",
+        "Gold", "Diamond"
+    },
+    Multi = false,
+    Default = "Water"
+})
+CraftIngredient2Dropdown:OnChanged(function(v) scriptState.craftIngredient2 = v end)
+
+local CraftAmountSlider = AutoCraftSection:AddSlider("CraftAmount", {
+    Title = "Craft Amount",
+    Description = "How many times to craft the recipe",
+    Default = 1, Min = 1, Max = 999, Rounding = 1
+})
+CraftAmountSlider:OnChanged(function(v) scriptState.craftAmount = v end)
+
+local CraftDelaySlider = AutoCraftSection:AddSlider("CraftDelay", {
+    Title = "Craft Delay (seconds)",
+    Description = "Delay between each craft action",
+    Default = 0.5, Min = 0.1, Max = 3.0, Rounding = 1
+})
+CraftDelaySlider:OnChanged(function(v) scriptState.craftDelay = v end)
+
+local AutoCraftToggle = AutoCraftSection:AddToggle("AutoCraft", {
+    Title = "Auto Craft",
+    Description = "Automatically crafts the selected recipe",
+    Default = false
+})
+AutoCraftToggle:OnChanged(function(v) scriptState.autoCraft = v end)
+
+local CraftOnceButton = AutoCraftSection:AddButton({
+    Title = "Craft Once Now",
+    Description = "Craft the selected recipe one time immediately",
+    Callback = function()
+        local remote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("craft")
+        if remote then
+            remote:FireServer(scriptState.craftIngredient1, scriptState.craftIngredient2)
+        end
+        Fluent:Notify({ Title = "Craft A World", Content = "Craft action sent!", Duration = 2 })
+    end
 })
 
-Tabs.Fishing:AddSection("Modification")
-
-Tabs.Fishing:AddToggle("InstantBobber", {
-    Title       = "Instant Bobber",
-    Description = "Pelampung langsung menyentuh air setelah cast.",
-    Default     = false,
-    Callback    = function(v) State.InstantBobber = v end,
+-- Recipe Reference Section
+local RecipeRefSection = CraftingTab:AddSection("Common Recipes Reference")
+local RecipePara = RecipeRefSection:AddParagraph({
+    Title = "Key Recipes",
+    Content = [[
+Concrete = Stone + Sand
+Glass Pane = Sand + Lava
+Wooden Block = Tree + Tree
+Wooden BG = Wooden Block + Wooden Block
+Sunflower = Flower + Flower
+Door = Wooden Block + Concrete
+Fence = Wooden Block + Stone
+Ladder = Wooden Block + Rope
+Chest = Wooden Block + Iron
+Torch = Wooden Block + Coal
+Lantern = Glass Pane + Coal
+Tesla Coil = Crystal + Iron
+Small Lock = Iron + Gold (100 Gems)
+    ]]
 })
 
-Tabs.Fishing:AddToggle("CenterShake", {
-    Title       = "Center Shake",
-    Description = "Indikator shake selalu berada di tengah.",
-    Default     = false,
-    Callback    = function(v) State.CenterShake = v end,
+-- ==============================
+-- PLAYER TAB
+-- ==============================
+
+local SpeedSection = PlayerTab:AddSection("Movement")
+
+local WalkSpeedSlider = SpeedSection:AddSlider("WalkSpeed", {
+    Title = "Walk Speed",
+    Description = "Player movement speed (default: 16)",
+    Default = 16, Min = 1, Max = 200, Rounding = 1
+})
+WalkSpeedSlider:OnChanged(function(v)
+    scriptState.walkSpeed = v
+    if character and humanoid then
+        humanoid.WalkSpeed = v
+    end
+end)
+
+local JumpPowerSlider = SpeedSection:AddSlider("JumpPower", {
+    Title = "Jump Power",
+    Description = "Player jump height (default: 50)",
+    Default = 50, Min = 1, Max = 500, Rounding = 1
+})
+JumpPowerSlider:OnChanged(function(v)
+    scriptState.jumpPower = v
+    if character and humanoid then
+        humanoid.JumpPower = v
+    end
+end)
+
+local ResetSpeedButton = SpeedSection:AddButton({
+    Title = "Reset Speed & Jump to Default",
+    Description = "Returns walk speed and jump power to normal",
+    Callback = function()
+        if character and humanoid then
+            humanoid.WalkSpeed = 16
+            humanoid.JumpPower = 50
+            scriptState.walkSpeed = 16
+            scriptState.jumpPower = 50
+        end
+        Fluent:Notify({ Title = "Player", Content = "Speed reset to default!", Duration = 2 })
+    end
 })
 
-Tabs.Fishing:AddToggle("AlwaysProgressing", {
-    Title       = "Always Progressing",
-    Description = "Progress bar tangkapan terus maju.",
-    Default     = false,
-    Callback    = function(v) State.AlwaysProgressing = v end,
+local AbilitiesSection = PlayerTab:AddSection("Abilities")
+
+local InfiniteJumpToggle = AbilitiesSection:AddToggle("InfiniteJump", {
+    Title = "Infinite Jump",
+    Description = "Jump again in mid-air repeatedly",
+    Default = false
 })
+InfiniteJumpToggle:OnChanged(function(v)
+    scriptState.infiniteJump = v
+end)
 
-Tabs.Fishing:AddToggle("AntiProgressLoss", {
-    Title       = "Anti Progress Loss",
-    Description = "Progress tangkapan tidak akan berkurang.",
-    Default     = false,
-    Callback    = function(v)
-        State.AntiProgressLoss = v
-        if v then State.progressCache = 0 end
-    end,
+local NoClipToggle = AbilitiesSection:AddToggle("NoClip", {
+    Title = "No Clip",
+    Description = "Walk through walls and blocks",
+    Default = false
 })
-
--- ============================================================
---  UTILITIES TAB
--- ============================================================
-
-Tabs.Utilities:AddSection("Boat")
-
-Tabs.Utilities:AddToggle("SuperBoat", {
-    Title       = "Super Boat",
-    Description = "Boost kecepatan kapalmu secara drastis.",
-    Default     = false,
-    Callback    = function(v)
-        State.SuperBoat = v
-        task.spawn(function()
-            for _, seat in ipairs(workspace:GetDescendants()) do
-                if seat:IsA("VehicleSeat") then
-                    local owner = seat.Parent:FindFirstChild("Owner")
-                    if owner and owner.Value == LocalPlayer.Name then
-                        pcall(function()
-                            seat.MaxSpeed  = v and State.BoatSpeed or 30
-                            seat.Torque    = v and 10000 or 2000
-                            seat.TurnSpeed = v and 4 or 1
-                        end)
-                    end
+NoClipToggle:OnChanged(function(v)
+    scriptState.noClip = v
+    if not v then
+        -- Re-enable collision on all parts
+        if character then
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
                 end
             end
-        end)
-    end,
-})
-
-Tabs.Utilities:AddSlider("BoatSpeed", {
-    Title       = "Boat Speed",
-    Description = "Kecepatan Super Boat.",
-    Default     = 60,
-    Min         = 30,
-    Max         = 400,
-    Rounding    = 0,
-    Callback    = function(v) State.BoatSpeed = v end,
-})
-
-Tabs.Utilities:AddSection("Selling")
-
-Tabs.Utilities:AddToggle("SellOnCatch", {
-    Title       = "Sell All On Fish Caught",
-    Description = "Langsung jual semua ikan setiap kali dapat tangkapan.",
-    Default     = false,
-    Callback    = function(v) State.SellOnCatch = v end,
-})
-
-Tabs.Utilities:AddSlider("AutoSellDelay", {
-    Title       = "Auto Sell Delay (Minutes)",
-    Description = "Interval otomatis jual semua inventory (menit).",
-    Default     = 5,
-    Min         = 1,
-    Max         = 60,
-    Rounding    = 0,
-    Callback    = function(v) State.AutoSellDelay = v end,
-})
-
-Tabs.Utilities:AddToggle("AutoSell", {
-    Title       = "Auto Sell All",
-    Description = "Otomatis jual semua inventory sesuai delay.",
-    Default     = false,
-    Callback    = function(v) State.AutoSell = v end,
-})
-
-Tabs.Utilities:AddSection("Starfall")
-
-Tabs.Utilities:AddParagraph({
-    Title   = "Star Crater Status",
-    Content = "Aktifkan toggle di bawah untuk auto ambil Star Crater saat muncul di map.",
-})
-
-Tabs.Utilities:AddToggle("AutoCollectStar", {
-    Title       = "Auto Collect Star Crater",
-    Description = "Otomatis teleport & kumpulkan Star Crater saat muncul.",
-    Default     = false,
-    Callback    = function(v) State.AutoCollectStar = v end,
-})
-
-Tabs.Utilities:AddSection("Rods")
-
-Tabs.Utilities:AddDropdown("SelectRod", {
-    Title       = "Select Rod",
-    Description = "Pilih rod yang ingin dibeli.",
-    Values      = RodList,
-    Multi       = false,
-    Default     = 1,
-    Callback    = function(v) State.SelectedRod = v end,
-})
-
-Tabs.Utilities:AddButton({
-    Title       = "Purchase Selected Rod",
-    Description = "Beli rod yang dipilih.",
-    Callback    = function()
-        FireRemote("BuyRod", State.SelectedRod)
-        FireRemote("PurchaseRod", State.SelectedRod)
-        Fluent:Notify({ Title = "Rod", Content = "Mencoba beli: " .. State.SelectedRod, Duration = 3 })
-    end,
-})
-
-Tabs.Utilities:AddSection("Crates")
-
-Tabs.Utilities:AddDropdown("SelectCrate", {
-    Title       = "Select Crate",
-    Description = "Pilih crate yang ingin dibeli.",
-    Values      = CrateList,
-    Multi       = false,
-    Default     = 1,
-    Callback    = function(v) State.SelectedCrate = v end,
-})
-
-Tabs.Utilities:AddSlider("BuyCrateAmount", {
-    Title       = "Buy Crate Amount",
-    Description = "Jumlah crate yang dibeli sekali tekan.",
-    Default     = 1,
-    Min         = 1,
-    Max         = 100,
-    Rounding    = 0,
-    Callback    = function(v) State.BuyCrateAmount = v end,
-})
-
-Tabs.Utilities:AddButton({
-    Title       = "Purchase Selected Crate",
-    Description = "Beli crate sejumlah yang sudah diset.",
-    Callback    = function()
-        for i = 1, State.BuyCrateAmount do
-            FireRemote("BuyCrate", State.SelectedCrate)
-            task.wait(0.08)
         end
-        Fluent:Notify({
-            Title    = "Crate",
-            Content  = string.format("Beli %dx %s", State.BuyCrateAmount, State.SelectedCrate),
-            Duration = 3,
-        })
-    end,
+    end
+end)
+
+local AntiKickToggle = AbilitiesSection:AddToggle("AntiKick", {
+    Title = "Anti Kick / Anti AFK",
+    Description = "Prevents being kicked for inactivity",
+    Default = false
+})
+AntiKickToggle:OnChanged(function(v)
+    scriptState.antiKick = v
+end)
+
+local AutoRespawnToggle = AbilitiesSection:AddToggle("AutoRespawn", {
+    Title = "Auto Respawn",
+    Description = "Automatically respawns if character dies",
+    Default = false
+})
+AutoRespawnToggle:OnChanged(function(v) scriptState.autoRespawn = v end)
+
+local PlayerInfoSection = PlayerTab:AddSection("Player Info")
+local PlayerInfoPara = PlayerInfoSection:AddParagraph({
+    Title = "Your Info",
+    Content = "Name: " .. player.Name .. "\nDisplay: " .. player.DisplayName .. "\nWorld: Loading..."
 })
 
-Tabs.Utilities:AddSection("Totems")
+-- ==============================
+-- ESP TAB
+-- ==============================
 
-Tabs.Utilities:AddDropdown("SelectTotem", {
-    Title       = "Select Totem",
-    Description = "Pilih totem yang ingin dibeli.",
-    Values      = TotemList,
-    Multi       = false,
-    Default     = 1,
-    Callback    = function(v) State.SelectedTotem = v end,
+local ESPBlockSection = ESPTab:AddSection("Block & Drop ESP")
+
+local BlockESPToggle = ESPBlockSection:AddToggle("BlockESP", {
+    Title = "Rare Block ESP",
+    Description = "Highlights rare/valuable blocks through walls with boxes",
+    Default = false
 })
-
-Tabs.Utilities:AddSlider("BuyTotemAmount", {
-    Title       = "Buy Totem Amount",
-    Description = "Jumlah totem yang dibeli sekali tekan.",
-    Default     = 1,
-    Min         = 1,
-    Max         = 50,
-    Rounding    = 0,
-    Callback    = function(v) State.BuyTotemAmount = v end,
-})
-
-Tabs.Utilities:AddButton({
-    Title       = "Purchase Selected Totem",
-    Description = "Beli totem sejumlah yang sudah diset.",
-    Callback    = function()
-        for i = 1, State.BuyTotemAmount do
-            FireRemote("BuyTotem", State.SelectedTotem)
-            task.wait(0.08)
+BlockESPToggle:OnChanged(function(v)
+    scriptState.blockESP = v
+    if not v then
+        -- Remove existing ESP labels
+        for _, label in ipairs(Workspace:GetDescendants()) do
+            if label.Name == "CAW_BlockESP" then label:Destroy() end
         end
-        Fluent:Notify({
-            Title    = "Totem",
-            Content  = string.format("Beli %dx %s", State.BuyTotemAmount, State.SelectedTotem),
-            Duration = 3,
-        })
-    end,
+    end
+end)
+
+local DropESPToggle = ESPBlockSection:AddToggle("DropESP", {
+    Title = "Item Drop ESP",
+    Description = "Shows dropped items on the ground with labels",
+    Default = false
 })
+DropESPToggle:OnChanged(function(v)
+    scriptState.dropESP = v
+    if not v then
+        for _, label in ipairs(Workspace:GetDescendants()) do
+            if label.Name == "CAW_DropESP" then label:Destroy() end
+        end
+    end
+end)
 
-Tabs.Utilities:AddSection("Miscellaneous")
+local PlayerESPSection = ESPTab:AddSection("Player ESP")
 
-Tabs.Utilities:AddToggle("ShowRadar", {
-    Title       = "Show Radar",
-    Description = "Tampilkan fish radar (persist antar join sejak Feb 2026 update).",
-    Default     = false,
-    Callback    = function(v)
-        State.ShowRadar = v
-        FireRemote("SetRadar", v)
-        FireRemote("ToggleRadar", v)
-        for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
-            if gui.Name:lower():find("radar") then
-                pcall(function() gui.Enabled = v end)
+local PlayerESPToggle = PlayerESPSection:AddToggle("PlayerESP", {
+    Title = "Player ESP",
+    Description = "Shows all players through walls with name labels",
+    Default = false
+})
+PlayerESPToggle:OnChanged(function(v)
+    scriptState.playerESP = v
+    if not v then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character then
+                local existing = plr.Character:FindFirstChild("CAW_PlayerESP")
+                if existing then existing:Destroy() end
             end
         end
-    end,
+    end
+end)
+
+-- ESP helper function
+local function createBillboard(parent, text, name, color)
+    local existing = parent:FindFirstChild(name)
+    if existing then existing:Destroy() end
+
+    local bb = Instance.new("BillboardGui")
+    bb.Name = name
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 100, 0, 40)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.Parent = parent
+
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.fromScale(1, 1)
+    label.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    label.TextStrokeTransparency = 0
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.Text = text
+    label.Parent = bb
+
+    return bb
+end
+
+-- ==============================
+-- WORLD TAB
+-- ==============================
+
+local WorldNavSection = WorldTab:AddSection("World Navigation")
+
+local WorldNameInput = WorldNavSection:AddInput("WorldName", {
+    Title = "Enter World Name",
+    Description = "Type the world name to navigate (e.g. PlayerNameRBX)",
+    Default = "",
+    Placeholder = "PlayerNameRBX"
 })
+WorldNameInput:OnChanged(function(v) scriptState.selectedWorld = v end)
 
-Tabs.Utilities:AddToggle("AntiOxygen", {
-    Title       = "Anti Oxygen",
-    Description = "Cegah oksigen habis (penting di Tidefall underwater).",
-    Default     = false,
-    Callback    = function(v) State.AntiOxygen = v end,
-})
-
-Tabs.Utilities:AddToggle("AntiTemperature", {
-    Title       = "Anti Temperature",
-    Description = "Cegah damage suhu (berguna di Scoria Reach lava zone).",
-    Default     = false,
-    Callback    = function(v) State.AntiTemperature = v end,
-})
-
-Tabs.Utilities:AddToggle("AntiPressure", {
-    Title       = "Anti Pressure",
-    Description = "Cegah damage tekanan di perairan dalam Tidefall.",
-    Default     = false,
-    Callback    = function(v) State.AntiPressure = v end,
-})
-
--- ============================================================
---  TELEPORTS TAB
--- ============================================================
-
-Tabs.Teleports:AddSection("Teleport")
-
-Tabs.Teleports:AddParagraph({
-    Title   = "Lokasi Tersedia (2026)",
-    Content = "Tidefall (Jan) · Scoria Reach (Feb 15) · Lost Jungle + Toxic Grove (Mar 7)\nTekan RightCtrl untuk minimize GUI.",
-})
-
-Tabs.Teleports:AddDropdown("TeleportLocation", {
-    Title       = "Select Teleport Location",
-    Description = "Pilih tujuan teleport.",
-    Values      = TeleportNames,
-    Multi       = false,
-    Default     = 1,
-    Callback    = function(v) State.SelectedTeleport = v end,
-})
-
-Tabs.Teleports:AddButton({
-    Title       = "Teleport To Selected Location",
-    Description = "Teleport karakter ke lokasi yang dipilih.",
-    Callback    = function()
-        local destVec = TeleportLocations[State.SelectedTeleport]
-        if not destVec then return end
-        local root = GetRoot()
-        if root then
-            root.CFrame = CFrame.new(destVec)
-            Fluent:Notify({ Title = "Teleport", Content = "Tiba di: " .. State.SelectedTeleport, Duration = 3 })
+local GoToWorldButton = WorldNavSection:AddButton({
+    Title = "Go To World",
+    Description = "Attempts to navigate to the entered world name",
+    Callback = function()
+        if scriptState.selectedWorld == "" then
+            Fluent:Notify({ Title = "World", Content = "Please enter a world name first!", Duration = 3 })
+            return
+        end
+        local remote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("joinWorld")
+        if remote then
+            remote:FireServer(scriptState.selectedWorld)
+            Fluent:Notify({ Title = "World", Content = "Joining: " .. scriptState.selectedWorld, Duration = 3 })
         else
-            Fluent:Notify({ Title = "Gagal", Content = "Karakter tidak ditemukan, coba lagi.", Duration = 3 })
+            -- Attempt via RemoteFunction
+            local rf = ReplicatedStorage:FindFirstChild("functions") and ReplicatedStorage.functions:FindFirstChild("joinWorld")
+            if rf then
+                rf:InvokeServer(scriptState.selectedWorld)
+                Fluent:Notify({ Title = "World", Content = "Joining: " .. scriptState.selectedWorld, Duration = 3 })
+            else
+                Fluent:Notify({ Title = "World", Content = "Could not find join world remote. Try manually.", Duration = 4 })
+            end
         end
-    end,
+    end
 })
 
--- ============================================================
---  SETTINGS TAB
--- ============================================================
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-InterfaceManager:SetFolder("FischScript2026")
-SaveManager:SetFolder("FischScript2026/configs")
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-InterfaceManager:BuildInterfaceSection(Tabs.Settings)
-SaveManager:BuildConfigSection(Tabs.Settings)
+local QuickWorldsSection = WorldTab:AddSection("Quick Join - Famous Worlds")
 
--- ============================================================
---  CORE LOGIC
--- ============================================================
+local FamousWorldDropdown = QuickWorldsSection:AddDropdown("FamousWorld", {
+    Title = "Famous Public Worlds",
+    Values = {
+        "RECIPES",
+        "BUYRARESAPLINGS",
+        "GAMBLES",
+        "START",
+        "HELP",
+        "MARKET",
+        "GEMS",
+        "TRADE"
+    },
+    Multi = false,
+    Default = "RECIPES"
+})
+FamousWorldDropdown:OnChanged(function(v) scriptState.selectedWorld = v end)
 
--- Minigame GUI detection
-local function GetFischGui()
-    local pg = LocalPlayer.PlayerGui
-    for _, name in ipairs({"FishingGui","MiniGame","FishingMiniGame","GameGui","Fishing"}) do
-        local g = pg:FindFirstChild(name)
-        if g then return g end
-    end
-    for _, gui in ipairs(pg:GetChildren()) do
-        if gui:IsA("ScreenGui") then
-            if gui:FindFirstChild("ShakeFrame") or gui:FindFirstChild("ReelFrame")
-            or gui:FindFirstChild("FishingFrame") or gui:FindFirstChild("MiniGameFrame") then
-                return gui
-            end
+local JoinFamousButton = QuickWorldsSection:AddButton({
+    Title = "Join Selected Famous World",
+    Description = "Quickly joins well-known public worlds",
+    Callback = function()
+        local remote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("joinWorld")
+        if remote then
+            remote:FireServer(scriptState.selectedWorld)
+            Fluent:Notify({ Title = "World", Content = "Joining: " .. scriptState.selectedWorld, Duration = 3 })
+        else
+            Fluent:Notify({ Title = "World", Content = "Remote not found. Try entering the world manually in the main menu.", Duration = 4 })
         end
     end
-    return nil
-end
+})
 
--- VirtualInputManager helper
-local VIM = game:GetService("VirtualInputManager")
-
-local function PressKey(key)
-    pcall(function()
-        VIM:SendKeyEvent(true,  key, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, key, false, game)
-    end)
-end
-
--- Cast
-local castCooldown = false
-local function TryCast()
-    if castCooldown then return end
-    castCooldown = true
-    FireRemote("Cast")
-    FireRemote("CastRod")
-    FireRemote("StartFishing")
-    PressKey(Enum.KeyCode.E)
-    task.delay(2.5, function() castCooldown = false end)
-end
-
--- Shake (click / spacebar during minigame)
-local function TryShake()
-    FireRemote("Shake")
-    FireRemote("ShakeInput")
-    PressKey(Enum.KeyCode.Space)
-    -- click GUI button
-    local gui = GetFischGui()
-    if gui then
-        for _, btn in ipairs(gui:GetDescendants()) do
-            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
-                pcall(function() btn.Activated:Fire() end)
-                break
-            end
+local JoinMyWorldButton = QuickWorldsSection:AddButton({
+    Title = "Join MY World",
+    Description = "Auto-joins your personal world (YourNameRBX)",
+    Callback = function()
+        local myWorld = player.Name .. "RBX"
+        local remote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("joinWorld")
+        if remote then
+            remote:FireServer(myWorld)
+            Fluent:Notify({ Title = "World", Content = "Joining your world: " .. myWorld, Duration = 3 })
+        else
+            Fluent:Notify({ Title = "World", Content = "Your world name: " .. myWorld .. "\n(Enter this in the world menu)", Duration = 5 })
         end
     end
-end
+})
 
--- Reel
-local function TryReel()
-    FireRemote("Reel")
-    FireRemote("ReelFish")
-    FireRemote("PullFish")
-    PressKey(Enum.KeyCode.Space)
-end
+-- Lock Buyer Section
+local LockSection = WorldTab:AddSection("Lock Buyer")
+local LockPara = LockSection:AddParagraph({
+    Title = "Lock Prices",
+    Content = "Small Lock: 100 Gems\nMedium Lock: 250 Gems\nLarge Lock: 500 Gems\nWorld Lock: 1000 Gems"
+})
 
--- Sell All
-local function SellAll()
-    FireRemote("SellAll")
-    FireRemote("SellFish")
-    FireRemote("SellInventory")
-    local r = WaitForRemote("Sell", 1)
-    if r and r:IsA("RemoteFunction") then
-        pcall(function() r:InvokeServer("all") end)
-    end
-end
+local LockDropdown = LockSection:AddDropdown("SelectLock", {
+    Title = "Select Lock Type",
+    Values = { "Small Lock", "Medium Lock", "Large Lock", "World Lock" },
+    Multi = false,
+    Default = "Small Lock"
+})
+local selectedLock = "Small Lock"
+LockDropdown:OnChanged(function(v) selectedLock = v end)
 
--- Stat killer (Oxygen / Temperature / Pressure)
-local function KillStat(name, maxVal)
-    FireRemote("SetStat", name, maxVal)
-    for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
-        if obj.Name:lower():find(name:lower()) then
-            if obj:IsA("Frame") then
-                pcall(function() obj.Size = UDim2.new(1,0, obj.Size.Y.Scale,0) end)
-            elseif obj:IsA("TextLabel") then
-                pcall(function() obj.Text = tostring(maxVal) end)
-            end
+local BuyLockButton = LockSection:AddButton({
+    Title = "Purchase Selected Lock",
+    Description = "Buys the chosen lock type with Gems",
+    Callback = function()
+        local remote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("purchaseItem")
+        if remote then
+            remote:FireServer(selectedLock, 1)
+            Fluent:Notify({ Title = "Shop", Content = "Purchased: " .. selectedLock, Duration = 3 })
+        else
+            Fluent:Notify({ Title = "Shop", Content = "Purchase remote not found!", Duration = 3 })
         end
     end
-    local char = LocalPlayer.Character
-    if char then
-        for _, v in ipairs(char:GetDescendants()) do
-            if v.Name:lower():find(name:lower())
-            and (v:IsA("NumberValue") or v:IsA("IntValue")) then
-                pcall(function() v.Value = maxVal end)
-            end
+})
+
+-- ==============================
+-- MISC TAB
+-- ==============================
+
+local NotifSection = MiscTab:AddSection("Notifications & Status")
+local StatusPara = NotifSection:AddParagraph({
+    Title = "Script Info",
+    Content = "Craft A World Script v1.0\nGame: Craft A World (Roblox)\nMinimize: Right Ctrl"
+})
+
+local AntiAFKSection = MiscTab:AddSection("Anti-Detection")
+
+local AntiAFKToggle = AntiAFKSection:AddToggle("AntiAFK2", {
+    Title = "Anti AFK (Anti Kick)",
+    Description = "Sends periodic virtual input to prevent AFK kick",
+    Default = false
+})
+AntiAFKToggle:OnChanged(function(v) scriptState.antiKick = v end)
+
+local RandomWalkToggle = AntiAFKSection:AddToggle("RandomWalk", {
+    Title = "Random Walk (Anti-Detect)",
+    Description = "Randomly moves character every few seconds to appear human",
+    Default = false
+})
+local randomWalk = false
+RandomWalkToggle:OnChanged(function(v) randomWalk = v end)
+
+-- Teleport to Players
+local TpPlayersSection = MiscTab:AddSection("Teleport to Player")
+
+local function getPlayerNames()
+    local names = {}
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            table.insert(names, plr.Name)
         end
     end
+    if #names == 0 then table.insert(names, "No Players Found") end
+    return names
 end
 
--- ── Heartbeat step counter
-local hbAccum = 0
+local TargetPlayerDropdown = TpPlayersSection:AddDropdown("TargetPlayer", {
+    Title = "Select Player to Teleport To",
+    Values = getPlayerNames(),
+    Multi = false,
+    Default = getPlayerNames()[1]
+})
+local targetPlayerName = getPlayerNames()[1]
+TargetPlayerDropdown:OnChanged(function(v) targetPlayerName = v end)
 
-RunService.Heartbeat:Connect(function(dt)
-    -- Auto Cast
-    if State.AutoCast and not castCooldown then TryCast() end
-    -- Auto Shake / Reel
-    if State.AutoShake then TryShake() end
-    if State.AutoReel  then TryReel()  end
+local RefreshPlayersButton = TpPlayersSection:AddButton({
+    Title = "Refresh Player List",
+    Description = "Updates the player list",
+    Callback = function()
+        -- Fluent doesn't support dynamic dropdown refresh natively; notify user
+        Fluent:Notify({ Title = "Players", Content = "There are " .. #Players:GetPlayers() .. " players in this server.", Duration = 3 })
+    end
+})
 
-    -- Instant Bobber
-    if State.InstantBobber then
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and obj.Name:lower():find("bobber") then
-                local ow = obj.Parent:FindFirstChild("Owner")
-                if ow and ow.Value == LocalPlayer.Name then
-                    pcall(function() obj.Velocity = Vector3.new(0,-9999,0) end)
-                end
+local TeleportToPlayerButton = TpPlayersSection:AddButton({
+    Title = "Teleport To Selected Player",
+    Description = "Instantly moves to selected player's position",
+    Callback = function()
+        local target = Players:FindFirstChild(targetPlayerName)
+        if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+            if hrp then
+                hrp.CFrame = target.Character.HumanoidRootPart.CFrame + Vector3.new(3, 0, 0)
+                Fluent:Notify({ Title = "Teleport", Content = "Teleported to " .. targetPlayerName, Duration = 2 })
             end
+        else
+            Fluent:Notify({ Title = "Teleport", Content = "Player not found or has no character.", Duration = 3 })
         end
     end
+})
 
-    -- Center Shake
-    if State.CenterShake then
-        local gui = GetFischGui()
-        if gui then
-            for _, obj in ipairs(gui:GetDescendants()) do
-                local n = obj.Name:lower()
-                if (n:find("indicator") or n:find("pointer") or n:find("cursor") or n:find("knob"))
-                and obj:IsA("GuiObject") then
-                    pcall(function()
-                        obj.Position = UDim2.new(0.5, 0, obj.Position.Y.Scale, obj.Position.Y.Offset)
-                    end)
-                end
-            end
-        end
-    end
+-- Credits
+local CreditsSection = MiscTab:AddSection("Credits")
+local CreditsPara = CreditsSection:AddParagraph({
+    Title = "Credits",
+    Content = "Script: Craft A World Auto Script v1.0\nUI: Fluent Library by dawid-scripts\nPurpose: Educational / Testing Only\n\nWARNING: Using exploits in Roblox can\nresult in permanent account bans."
+})
 
-    -- Progress bar mods
-    if State.AlwaysProgressing or State.AntiProgressLoss then
-        local gui = GetFischGui()
-        if gui then
-            for _, obj in ipairs(gui:GetDescendants()) do
-                local n = obj.Name:lower()
-                if (n:find("progress") or n:find("fill") or n:find("catch")) and obj:IsA("Frame") then
-                    pcall(function()
-                        if State.AlwaysProgressing then
-                            obj.Size = UDim2.new(math.min(obj.Size.X.Scale+0.004, 1), 0, obj.Size.Y.Scale, 0)
-                        end
-                        if State.AntiProgressLoss then
-                            if obj.Size.X.Scale > State.progressCache then
-                                State.progressCache = obj.Size.X.Scale
-                            else
-                                obj.Size = UDim2.new(State.progressCache, 0, obj.Size.Y.Scale, 0)
+-- ==============================
+-- BACKGROUND LOOPS
+-- ==============================
+
+-- Main farming loop
+spawn(function()
+    while wait(scriptState.farmDelay) do
+        -- Auto Break
+        if scriptState.autoBreak then
+            if hrp then
+                local targetPos = hrp.Position + Vector3.new(scriptState.breakOffsetX, scriptState.breakOffsetY, 0)
+                -- Find block at target position and punch it
+                local blockFound = false
+                for _, obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("BasePart") and obj.Name ~= "HumanoidRootPart"
+                        and not obj:IsDescendantOf(character) then
+                        if (obj.Position - targetPos).Magnitude < 3 then
+                            -- Attempt to fire break remote
+                            local breakRemote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("breakBlock")
+                            if breakRemote then
+                                breakRemote:FireServer(obj)
+                                blockFound = true
+                                break
+                            end
+                            -- Fallback: use touch
+                            if obj:FindFirstChild("ClickDetector") then
+                                fireclickdetector(obj.ClickDetector)
+                                blockFound = true
+                                break
                             end
                         end
-                    end)
-                end
-            end
-        end
-    end
-
-    -- Throttled (every 0.1s)
-    hbAccum += dt
-    if hbAccum >= 0.1 then
-        hbAccum = 0
-
-        if State.AntiOxygen      then KillStat("Oxygen",      100) end
-        if State.AntiTemperature then KillStat("Temperature", 37)  end
-        if State.AntiPressure    then KillStat("Pressure",    0)   end
-
-        -- Super Boat
-        if State.SuperBoat then
-            for _, seat in ipairs(workspace:GetDescendants()) do
-                if seat:IsA("VehicleSeat") then
-                    local ow = seat.Parent:FindFirstChild("Owner") or seat.Parent:FindFirstChild("PlayerName")
-                    if ow and ow.Value == LocalPlayer.Name then
-                        pcall(function()
-                            seat.MaxSpeed  = State.BoatSpeed
-                            seat.Torque    = 10000
-                            seat.TurnSpeed = 4
-                        end)
                     end
                 end
             end
         end
 
-        -- Auto Sell timer
-        if State.AutoSell then
-            if (os.clock() - State.lastSellTime) >= (State.AutoSellDelay * 60) then
-                State.lastSellTime = os.clock()
-                SellAll()
-                Fluent:Notify({ Title = "Auto Sell", Content = "Inventory dijual otomatis.", Duration = 2 })
-            end
-        end
-    end
-end)
-
--- Star Crater watcher
-local lastStarNotif = 0
-task.spawn(function()
-    while task.wait(5) do
-        local crater = workspace:FindFirstChild("StarCrater")
-        if not crater then
-            for _, obj in ipairs(workspace:GetChildren()) do
-                if obj.Name:lower():find("crater") or obj.Name:lower():find("starfall") then
-                    crater = obj; break
+        -- Auto Place
+        if scriptState.autoPlace then
+            if hrp then
+                local targetPos = hrp.Position + Vector3.new(scriptState.placeOffsetX, scriptState.placeOffsetY, 0)
+                local placeRemote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("placeBlock")
+                if placeRemote then
+                    placeRemote:FireServer(scriptState.selectedBlock, targetPos)
                 end
             end
         end
-        if crater then
-            if State.AutoCollectStar then
-                local cf = crater:IsA("Model") and pcall(function() return crater:GetPivot() end)
-                        or (crater:IsA("BasePart") and crater.CFrame)
-                local root = GetRoot()
-                if root and cf then
-                    if type(cf) == "userdata" then
-                        root.CFrame = cf + Vector3.new(0, 3, 0)
+
+        -- Auto Plant
+        if scriptState.autoPlant then
+            if hrp then
+                local plantRemote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("plantSapling")
+                if plantRemote then
+                    local targetPos = hrp.Position + Vector3.new(scriptState.placeOffsetX, scriptState.placeOffsetY, 0)
+                    plantRemote:FireServer(scriptState.selectedSapling, targetPos)
+                end
+            end
+        end
+
+        -- Auto Collect Drops
+        if scriptState.autoCollectDrops then
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if obj.Name == "Drop" or obj.Name == "ItemDrop" or obj.Name == "Pickup" then
+                    if obj:IsA("BasePart") and hrp then
+                        if (obj.Position - hrp.Position).Magnitude < 50 then
+                            hrp.CFrame = CFrame.new(obj.Position)
+                            wait(0.1)
+                        end
                     end
                 end
-                FireRemote("CollectStarCrater")
-                FireRemote("CollectCrater")
-                FireRemote("GrabCrater")
             end
-            if os.clock() - lastStarNotif > 30 then
-                lastStarNotif = os.clock()
-                Fluent:Notify({
-                    Title    = "⭐ Star Crater!",
-                    Content  = "Ditemukan! Auto Collect: " .. (State.AutoCollectStar and "ON" or "OFF"),
-                    Duration = 5,
-                })
+        end
+
+        -- Auto Gem Farm (break blocks in a sweeping pattern)
+        if scriptState.autoGemFarm then
+            if hrp then
+                local gemRemote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("breakBlock")
+                if gemRemote then
+                    for x = -3, 3 do
+                        for y = -1, 2 do
+                            local targetPos = hrp.Position + Vector3.new(x, y, 0)
+                            for _, obj in ipairs(Workspace:GetDescendants()) do
+                                if obj:IsA("BasePart") and (obj.Position - targetPos).Magnitude < 1.5
+                                    and not obj:IsDescendantOf(character) then
+                                    gemRemote:FireServer(obj)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        wait(scriptState.farmDelay)
+    end
+end)
+
+-- Auto Craft loop
+spawn(function()
+    while wait(scriptState.craftDelay) do
+        if scriptState.autoCraft then
+            local craftRemote = ReplicatedStorage:FindFirstChild("events") and ReplicatedStorage.events:FindFirstChild("craft")
+            if craftRemote then
+                for i = 1, scriptState.craftAmount do
+                    craftRemote:FireServer(scriptState.craftIngredient1, scriptState.craftIngredient2)
+                    wait(scriptState.craftDelay)
+                end
             end
         end
     end
 end)
 
--- Fish caught hook (sell on catch)
-task.spawn(function()
-    local catchRemote
-    for _, name in ipairs({"FishCaught","CaughtFish","OnCatch","FishLanded"}) do
-        catchRemote = WaitForRemote(name, 10)
-        if catchRemote then break end
-    end
-    if catchRemote and catchRemote:IsA("RemoteEvent") then
-        catchRemote.OnClientEvent:Connect(function()
-            castCooldown = false
-            State.progressCache = 0
-            if State.SellOnCatch then
-                task.wait(0.3)
-                SellAll()
+-- No Clip + Infinite Jump + Anti Kick loop
+RunService.Stepped:Connect(function()
+    if character and humanoid then
+        -- No Clip
+        if scriptState.noClip then
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    part.CanCollide = false
+                end
             end
+        end
+
+        -- Anti Kick (move randomly every 2 minutes effectively)
+        if scriptState.antiKick then
+            if humanoid.MoveDirection == Vector3.new(0, 0, 0) then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+                task.delay(0.1, function()
+                    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+                end)
+            end
+        end
+    end
+end)
+
+-- Infinite Jump
+UserInputService.JumpRequest:Connect(function()
+    if scriptState.infiniteJump and character and humanoid then
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)
+
+-- Auto Respawn
+Players.LocalPlayer.CharacterRemoving:Connect(function()
+    if scriptState.autoRespawn then
+        task.delay(1, function()
+            player:LoadCharacter()
         end)
     end
 end)
 
--- ============================================================
---  Init
--- ============================================================
+-- Player ESP loop
+spawn(function()
+    while wait(1) do
+        if scriptState.playerESP then
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= player and plr.Character then
+                    local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        createBillboard(root, plr.Name, "CAW_PlayerESP", Color3.fromRGB(0, 200, 255))
+                    end
+                end
+            end
+        end
+
+        -- Drop ESP
+        if scriptState.dropESP then
+            for _, obj in ipairs(Workspace:GetDescendants()) do
+                if (obj.Name == "Drop" or obj.Name == "ItemDrop" or obj.Name == "Pickup")
+                    and obj:IsA("BasePart") then
+                    createBillboard(obj, "⬆ DROP", "CAW_DropESP", Color3.fromRGB(255, 220, 0))
+                end
+            end
+        end
+    end
+end)
+
+-- Random Walk anti-detection
+spawn(function()
+    local directions = {
+        Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0),
+        Vector3.new(0, 0, 1), Vector3.new(0, 0, -1)
+    }
+    while wait(math.random(4, 10)) do
+        if randomWalk and humanoid and character then
+            local dir = directions[math.random(1, #directions)]
+            humanoid:Move(dir)
+            wait(0.3)
+            humanoid:Move(Vector3.new(0, 0, 0))
+        end
+    end
+end)
+
+-- ==============================
+-- SAVE MANAGER SETUP
+-- ==============================
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+InterfaceManager:SetFolder("CraftAWorldScript")
+SaveManager:SetFolder("CraftAWorldScript/saves")
+InterfaceManager:BuildInterfaceSection(MiscTab)
+SaveManager:BuildConfigSection(MiscTab)
+
 Window:SelectTab(1)
-
-Fluent:Notify({
-    Title    = "Fisch Script 2026",
-    Content  = "Loaded! Tekan RightCtrl untuk toggle GUI.\nSupport: Tidefall · Scoria Reach · Lost Jungle",
-    Duration = 6,
-})
-
 SaveManager:LoadAutoloadConfig()
+
+-- ==============================
+-- STARTUP NOTIFICATION
+-- ==============================
+Fluent:Notify({
+    Title = "Craft A World Script",
+    Content = "Script loaded! v1.0\nMinimize: Right Ctrl",
+    SubContent = "For educational purposes only — use at own risk",
+    Duration = 6
+})
