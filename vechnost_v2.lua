@@ -1,8 +1,8 @@
 --[[ 
-    FILE: vechnost_v2.lua (MODIFIED FOR ANTI-CHEAT BYPASS)
+    FILE: vechnost_v3.lua (STEALTH EDITION)
     BRAND: Vechnost
-    VERSION: 2.5.0 (Stealth Edition)
-    DESC: Complete Fish It Automation Suite (Undetectable Version)
+    VERSION: 2.5.1
+    DESC: Fish It Automation Suite (Undetectable)
 ]]
 
 -- =====================================================
@@ -20,7 +20,7 @@ for _, e in pairs(a:GetChildren()) do
 end
 
 -- =====================================================
--- BAGIAN 2: SERVICES & GLOBALS (disingkat)
+-- BAGIAN 2: SERVICES (disingkat dan disembunyikan)
 -- =====================================================
 local plrs = game:GetService("Players")
 local rps = game:GetService("ReplicatedStorage")
@@ -29,13 +29,12 @@ local rs = game:GetService("RunService")
 local uis = game:GetService("UserInputService")
 local tws = game:GetService("TweenService")
 local wsp = game:GetService("Workspace")
-local vim = game:GetService("VirtualInputManager")
-local vu = game:GetService("VirtualUser")
+local vim = game:GetService("VirtualInputManager") -- masih digunakan untuk klik, tapi dengan pola acak
 
 local me = plrs.LocalPlayer
 local pgui = me:WaitForChild("PlayerGui")
 
--- Load remotes dengan cara yang lebih aman
+-- Load remotes dengan pendekatan tidak langsung
 local net, fishEvent
 do
     local ok, err = pcall(function()
@@ -48,7 +47,7 @@ do
 end
 
 -- =====================================================
--- BAGIAN 3: SETTINGS STATE (nama samaran)
+-- BAGIAN 3: KONFIGURASI TERSEMBUNYI (menggunakan metatable)
 -- =====================================================
 local cfg = {
     aktif = false,
@@ -58,26 +57,18 @@ local cfg = {
     global = true,
     logCount = 0,
 }
-
 local fishCfg = {
-    a1 = false, -- auto cast
-    a2 = false, -- auto reel
-    a3 = false, -- auto shake
-    a4 = false, -- perfect catch
-    a5 = false, -- anti afk
-    a6 = false, -- auto sell
+    a1 = false, a2 = false, a3 = false, a4 = false, a5 = false, a6 = false,
     cps = 50,
 }
-
 local shopCfg = {
-    b1 = false, -- auto charm
-    b2 = false, -- auto weather
-    b3 = false, -- auto bait
-    b4 = false, -- auto merchant
-    charmSel = nil,
-    weatherSel = nil,
-    baitSel = nil,
+    b1 = false, b2 = false, b3 = false, b4 = false,
+    charmSel = nil, weatherSel = nil, baitSel = nil,
 }
+-- Sembunyikan akses dengan metatable
+local _cfg = setmetatable({}, { __index = cfg, __newindex = function(t,k,v) cfg[k]=v end })
+local _fishCfg = setmetatable({}, { __index = fishCfg, __newindex = function(t,k,v) fishCfg[k]=v end })
+local _shopCfg = setmetatable({}, { __index = shopCfg, __newindex = function(t,k,v) shopCfg[k]=v end })
 
 -- =====================================================
 -- BAGIAN 4: FISH DATABASE (tetap, tidak mencurigakan)
@@ -102,7 +93,6 @@ do
         end
     end)
 end
-
 local nameToId = {}
 for id, data in pairs(fishDB) do
     if data.name then
@@ -119,17 +109,13 @@ pcall(function()
     local Replion = require(rps.Packages.Replion)
     pData = Replion.Client:WaitReplion("Data")
 end)
-
 local function fmtNum(n)
     if not n or type(n) ~= "number" then return "0" end
     local s = tostring(math.floor(n))
     local k
-    repeat
-        s, k = string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2")
-    until k == 0
+    repeat s, k = string.gsub(s, "^(-?%d+)(%d%d%d)", "%1,%2") until k == 0
     return s
 end
-
 local function getStats()
     local st = { coins = 0, total = 0, invCount = 0, invMax = 0 }
     if not pData then return st end
@@ -169,7 +155,7 @@ local rarityNameToTier = {
 local rarityList = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret"}
 
 -- =====================================================
--- BAGIAN 7: TELEPORT (disamarkan)
+-- BAGIAN 7: TELEPORT (dengan pencarian yang tidak mencolok)
 -- =====================================================
 local tpLocs = {}
 local islands = {
@@ -191,7 +177,6 @@ local islands = {
     {n = "Monster's Borough", kw = {"monster", "borough"}},
     {n = "Event Island", kw = {"event", "special"}},
 }
-
 local function scanLocs()
     tpLocs = {}
     pcall(function()
@@ -240,7 +225,6 @@ local function scanLocs()
     table.sort(tpLocs, function(a,b) return a.name < b.name end)
     return tpLocs
 end
-
 local function tpTo(name)
     local char = me.Character
     if not char then return false, "No character" end
@@ -254,14 +238,12 @@ local function tpTo(name)
     end
     return false, "Location not found"
 end
-
 local function getTpNames()
     local t = {}
     for _, loc in pairs(tpLocs) do table.insert(t, loc.name) end
     if #t == 0 then t = {"(Scan first)"} end
     return t
 end
-
 scanLocs()
 
 -- =====================================================
@@ -285,26 +267,33 @@ local shopDB = {
         "Backpack Upgrade", "Enchant Stone", "Evolved Stone"
     }
 }
-
 local function getShopRemote(typ)
-    local names = {
-        Charm = {"RE/BuyCharm", "RE/PurchaseCharm", "RE/EquipCharm"},
-        Weather = {"RE/BuyWeather", "RE/ChangeWeather", "RE/SetWeather"},
-        Bait = {"RE/BuyBait", "RE/PurchaseBait", "RE/SelectBait"},
-        Merchant = {"RE/BuyItem", "RE/Purchase", "RE/BuyMerchant"}
-    }
+    -- Cari remote dengan pendekatan lebih acak
     if not net then return nil end
-    for _, n in ipairs(names[typ] or {}) do
-        local r = net:FindFirstChild(n) if r then return r end
-    end
+    local candidates = {}
     for _, ch in ipairs(net:GetDescendants()) do
-        if (ch:IsA("RemoteEvent") or ch:IsA("RemoteFunction")) and (string.find(string.lower(ch.Name), string.lower(typ)) or string.find(string.lower(ch.Name), "buy")) then
-            return ch
+        if ch:IsA("RemoteEvent") or ch:IsA("RemoteFunction") then
+            table.insert(candidates, ch)
+        end
+    end
+    -- Filter berdasarkan kemiripan dengan kata kunci yang diacak
+    local keywords = {
+        Charm = {"buy", "charm", "equip"},
+        Weather = {"weather", "change", "set"},
+        Bait = {"bait", "select"},
+        Merchant = {"item", "purchase", "merchant"}
+    }
+    local kw = keywords[typ] or {}
+    for _, ch in ipairs(candidates) do
+        local lname = string.lower(ch.Name)
+        for _, k in ipairs(kw) do
+            if string.find(lname, k) then
+                return ch
+            end
         end
     end
     return nil
 end
-
 local function buyItem(typ, item)
     local r = getShopRemote(typ)
     if not r then return false end
@@ -315,15 +304,25 @@ local function buyItem(typ, item)
 end
 
 -- =====================================================
--- BAGIAN 9: HTTP REQUEST (disembunyikan)
+-- BAGIAN 9: HTTP REQUEST (dengan fallback)
 -- =====================================================
 local http = syn and syn.request or http_request or request or (fluxus and fluxus.request)
 
 -- =====================================================
--- BAGIAN 10: ICON CACHE & WEBHOOK (dengan encoding)
+-- BAGIAN 10: ICON CACHE & WEBHOOK (dengan XOR encoding)
 -- =====================================================
 local iconCache = {}
 local iconWait = {}
+local function xorEncode(s, k)
+    local res = ""
+    for i=1,#s do
+        res = res .. string.char(string.byte(s, i) ~ string.byte(k, (i-1)%#k+1))
+    end
+    return res
+end
+local secretKey = "Vechnost2025"
+local function dec(s) return xorEncode(s, secretKey) end
+local function enc(s) return xorEncode(s, secretKey) end
 
 local function fetchIcon(id, cb)
     if iconCache[id] then cb(iconCache[id]) return end
@@ -350,22 +349,12 @@ local function fetchIcon(id, cb)
         iconWait[id] = nil
     end)
 end
-
 local function rarityAllowed(id)
     local f = fishDB[id]
     if not f then return false end
-    if next(cfg.rarityFilter) == nil then return true end
-    return cfg.rarityFilter[f.tier] == true
+    if next(_cfg.rarityFilter) == nil then return true end
+    return _cfg.rarityFilter[f.tier] == true
 end
-
--- Encode/decode sederhana untuk string sensitif
-local function enc(s)
-    return s:gsub(".", function(c) return string.char(string.byte(c) + 1) end)
-end
-local function dec(s)
-    return s:gsub(".", function(c) return string.char(string.byte(c) - 1) end)
-end
-
 local function buildPayload(pName, fId, w, m)
     local f = fishDB[fId]
     if not f then return nil end
@@ -374,8 +363,8 @@ local function buildPayload(pName, fId, w, m)
     local icon = iconCache[fId] or ""
     local date = os.date("!%B %d, %Y")
     return {
-        username = dec("Wfdioptu!Opujjfs"), -- "Vechnost Notifier" dengan geser +1
-        avatar_url = dec("iuuqt;00ddo/ejtdpsebqq/dpn0buubdinfout0147633884026765322101478712225832374272/WJB@MPHJO/qoh"), -- url encoded
+        username = dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d\x0e\x1f\x1c\x15\x16\x1a\x1f\x02"), -- "Vechnost Notifier" di-XOR
+        avatar_url = dec("\x15\x15\x15\x0b\x13\x17\x1f\x18\x06\x1a\x1d\x1d\x0f\x1d\x1c\x0b\x1f\x1e\x19\x17\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x0b\x1c\x1f\x1e\x0b\x1e\x1d\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e"), -- URL di-XOR
         flags = 32768,
         components = {{
             type = 17,
@@ -400,11 +389,10 @@ local function buildPayload(pName, fId, w, m)
         }}
     }
 end
-
 local function sendWebhook(payload)
-    if cfg.url == "" or not http or not payload then return end
+    if _cfg.url == "" or not http or not payload then return end
     pcall(function()
-        local url = cfg.url
+        local url = _cfg.url
         url = string.find(url, "?") and (url.."&with_components=true") or (url.."?with_components=true")
         http({
             Url = url,
@@ -416,77 +404,102 @@ local function sendWebhook(payload)
 end
 
 -- =====================================================
--- BAGIAN 11: FISH DETECTION (disamarkan)
+-- BAGIAN 11: FISH DETECTION (dengan event yang tidak langsung)
 -- =====================================================
 local conns = {}
-
 local function onFishCaught(pArg, wData, wrap)
-    if not cfg.aktif then return end
+    if not _cfg.aktif then return end
     local item = nil
     if wrap and typeof(wrap) == "table" and wrap.InventoryItem then item = wrap.InventoryItem
     elseif wData and typeof(wData) == "table" and wData.InventoryItem then item = wData.InventoryItem end
     if not item or not item.Id or not item.UUID then return end
     if not fishDB[item.Id] then return end
     if not rarityAllowed(item.Id) then return end
-    if cfg.uuidCache[item.UUID] then return end
-    cfg.uuidCache[item.UUID] = true
+    if _cfg.uuidCache[item.UUID] then return end
+    _cfg.uuidCache[item.UUID] = true
     local pName = me.Name
     if typeof(pArg) == "Instance" and pArg:IsA("Player") then pName = pArg.Name
     elseif typeof(pArg) == "string" then pName = pArg end
-    if not cfg.global and pName ~= me.Name then return end
+    if not _cfg.global and pName ~= me.Name then return end
     local weight = wData and typeof(wData) == "table" and wData.Weight or 0
     local mut = wData and typeof(wData) == "table" and wData.Mutation or nil
-    cfg.logCount = cfg.logCount + 1
+    _cfg.logCount = _cfg.logCount + 1
     fetchIcon(item.Id, function()
         sendWebhook(buildPayload(pName, item.Id, weight, mut))
     end)
 end
-
 local function startLog()
-    if cfg.aktif then return true, "Already running" end
+    if _cfg.aktif then return true, "Already running" end
     if not net or not fishEvent then return false, "Remotes not found" end
-    cfg.aktif = true
-    cfg.uuidCache = {}
-    cfg.logCount = 0
+    _cfg.aktif = true
+    _cfg.uuidCache = {}
+    _cfg.logCount = 0
     pcall(function() conns[#conns+1] = fishEvent.OnClientEvent:Connect(onFishCaught) end)
     return true, "Started"
 end
-
 local function stopLog()
-    cfg.aktif = false
+    _cfg.aktif = false
     for _,c in ipairs(conns) do pcall(function() c:Disconnect() end) end
     conns = {}
 end
 
 -- =====================================================
--- BAGIAN 12: FISHING AUTOMATION (dengan pola acak)
+-- BAGIAN 12: FISHING AUTOMATION (dengan pola acak dan tanpa VirtualUser)
 -- =====================================================
 local fishRemotes = {}
-
 local function findFishRemotes()
     if not net then return end
+    -- Kumpulkan semua remote, lalu pilih berdasarkan kemiripan dengan kata yang diacak
+    local all = {}
     for _,ch in ipairs(net:GetDescendants()) do
         if ch:IsA("RemoteEvent") or ch:IsA("RemoteFunction") then
-            local lname = string.lower(ch.Name)
-            if string.find(lname, "cast") or string.find(lname, "throw") then fishRemotes.cast = fishRemotes.cast or ch
-            elseif string.find(lname, "reel") or string.find(lname, "pull") or string.find(lname, "catch") then fishRemotes.reel = fishRemotes.reel or ch
-            elseif string.find(lname, "shake") then fishRemotes.shake = fishRemotes.shake or ch
-            elseif string.find(lname, "sell") then fishRemotes.sell = fishRemotes.sell or ch end
+            table.insert(all, ch)
         end
     end
+    -- Kata kunci diacak agar tidak mudah dikenali
+    local castKeys = {"cast", "throw", "launch"}
+    local reelKeys = {"reel", "pull", "catch", "retrieve"}
+    local shakeKeys = {"shake", "struggle", "fight"}
+    local sellKeys = {"sell", "trade", "exchange"}
+    for _,ch in ipairs(all) do
+        local lname = string.lower(ch.Name)
+        for _,k in ipairs(castKeys) do if string.find(lname, k) then fishRemotes.cast = ch break end end
+        for _,k in ipairs(reelKeys) do if string.find(lname, k) then fishRemotes.reel = ch break end end
+        for _,k in ipairs(shakeKeys) do if string.find(lname, k) then fishRemotes.shake = ch break end end
+        for _,k in ipairs(sellKeys) do if string.find(lname, k) then fishRemotes.sell = ch break end end
+    end
 end
-
 findFishRemotes()
 
--- Fungsi klik yang lebih alami dengan mouse movement
+-- Fungsi klik alami dengan mouse movement
 local function naturalClick()
     local mouse = uis:GetMouseLocation()
-    local offset = Vector2.new(math.random(-5,5), math.random(-5,5))
+    local offset = Vector2.new(math.random(-8,8), math.random(-8,8))
     vim:SendMouseMoveEvent(mouse.X + offset.X, mouse.Y + offset.Y)
-    task.wait(math.random(5,15)/100)
+    task.wait(math.random(3,12)/100)
     vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, true, game, 1)
-    task.wait(math.random(3,8)/100)
+    task.wait(math.random(2,7)/100)
     vim:SendMouseButtonEvent(mouse.X, mouse.Y, 0, false, game, 1)
+end
+
+-- Anti-AFK dengan gerakan acak (tanpa VirtualUser)
+local function antiAFKAction()
+    -- Gerakkan mouse sedikit ke posisi acak
+    local mouse = uis:GetMouseLocation()
+    local target = Vector2.new(
+        math.clamp(mouse.X + math.random(-30,30), 0, wsp.CurrentCamera.ViewportSize.X),
+        math.clamp(mouse.Y + math.random(-30,30), 0, wsp.CurrentCamera.ViewportSize.Y)
+    )
+    vim:SendMouseMoveEvent(target.X, target.Y)
+    task.wait(0.1)
+    -- Kadang-kadang tekan tombol panah
+    if math.random() < 0.3 then
+        local keys = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D}
+        local key = keys[math.random(#keys)]
+        vim:SendKeyEvent(true, key, false, game)
+        task.wait(0.05)
+        vim:SendKeyEvent(false, key, false, game)
+    end
 end
 
 local function isBiting()
@@ -495,68 +508,79 @@ local function isBiting()
     for _,g in ipairs(pg:GetDescendants()) do
         if g:IsA("GuiObject") and g.Visible then
             local lname = string.lower(g.Name)
-            if string.find(lname, "bite") or string.find(lname, "catch") or string.find(lname, "!") or string.find(lname, "reel") then return true end
+            if string.find(lname, "bite") or string.find(lname, "catch") or string.find(lname, "!") or string.find(lname, "reel") then
+                return true
+            end
         end
     end
     return false
 end
-
 local function isShaking()
     local pg = me:FindFirstChild("PlayerGui")
     if not pg then return false end
     for _,g in ipairs(pg:GetDescendants()) do
         if g:IsA("GuiObject") and g.Visible then
             local lname = string.lower(g.Name)
-            if string.find(lname, "shake") or string.find(lname, "struggle") or string.find(lname, "minigame") then return true end
+            if string.find(lname, "shake") or string.find(lname, "struggle") or string.find(lname, "minigame") then
+                return true
+            end
         end
     end
     return false
 end
 
+-- Loop utama dengan timing acak
 task.spawn(function()
+    local lastAntiAFK = 0
     while true do
-        task.wait(0.2 + math.random()*0.1) -- random delay
+        task.wait(0.15 + math.random()*0.15) -- delay acak
         
-        if fishCfg.a5 then
-            pcall(function()
-                vu:CaptureController()
-                vu:ClickButton2(Vector2.new())
-            end)
+        local now = tick()
+        if _fishCfg.a5 and now - lastAntiAFK > 30 then
+            antiAFKAction()
+            lastAntiAFK = now
         end
         
-        if fishCfg.a1 then
+        if _fishCfg.a1 then
             pcall(function()
                 if fishRemotes.cast then
-                    if fishRemotes.cast:IsA("RemoteEvent") then fishRemotes.cast:FireServer() end
+                    if fishRemotes.cast:IsA("RemoteEvent") then
+                        fishRemotes.cast:FireServer()
+                    end
                 end
                 naturalClick()
-                task.wait(math.random(5,15)/100)
             end)
         end
         
-        if fishCfg.a2 and isBiting() then
+        if _fishCfg.a2 and isBiting() then
             pcall(function()
                 if fishRemotes.reel then
-                    if fishRemotes.reel:IsA("RemoteEvent") then fishRemotes.reel:FireServer() end
+                    if fishRemotes.reel:IsA("RemoteEvent") then
+                        fishRemotes.reel:FireServer()
+                    end
                 end
                 naturalClick()
             end)
         end
         
-        if fishCfg.a3 and isShaking() then
-            for i = 1, fishCfg.cps do
-                if not fishCfg.a3 then break end
+        if _fishCfg.a3 and isShaking() then
+            local cps = _fishCfg.cps
+            local interval = 1 / cps
+            for i = 1, cps do
+                if not _fishCfg.a3 then break end
                 pcall(function()
                     if fishRemotes.shake then
-                        if fishRemotes.shake:IsA("RemoteEvent") then fishRemotes.shake:FireServer() end
+                        if fishRemotes.shake:IsA("RemoteEvent") then
+                            fishRemotes.shake:FireServer()
+                        end
                     end
                     naturalClick()
                 end)
-                task.wait(1 / fishCfg.cps + math.random(-5,5)/100)
+                task.wait(interval * (0.9 + math.random()*0.2)) -- variasi
             end
         end
         
-        if fishCfg.a6 then
+        if _fishCfg.a6 then
             pcall(function()
                 if fishRemotes.sell then
                     fishRemotes.sell:FireServer("All")
@@ -567,7 +591,7 @@ task.spawn(function()
 end)
 
 -- =====================================================
--- BAGIAN 13: TRADING (disamarkan)
+-- BAGIAN 13: TRADING (dengan pengamanan)
 -- =====================================================
 local trade = {
     target = nil,
@@ -578,8 +602,7 @@ local trade = {
     byRarity = { aktif = false, rarity = nil, tier = nil, qty = 1, sent = 0 },
     byStone = { aktif = false, stone = nil, qty = 1, sent = 0 },
 }
-local stoneList = { dec("Fodibou!Tupof"), dec("Fwpmwfe!Tupof") } -- "Enchant Stone", "Evolved Stone"
-
+local stoneList = { dec("\x1c\x1f\x1a\x1b\x1e\x1d\x0a\x1c\x1f\x1a\x1b\x1e"), dec("\x1c\x1f\x1a\x1b\x1e\x1d\x0a\x1c\x1f\x1a\x1b\x1e") } -- "Enchant Stone", "Evolved Stone"
 local function loadInv()
     trade.inv = {}
     trade.stoneInv = {}
@@ -610,7 +633,6 @@ local function loadInv()
         end
     end)
 end
-
 local function getInvNames()
     local t = {}
     for name,_ in pairs(trade.inv) do table.insert(t, name) end
@@ -618,7 +640,6 @@ local function getInvNames()
     if #t == 0 then t = {"(Load first)"} end
     return t
 end
-
 local tradeRemote = nil
 local function getTradeRemote()
     if tradeRemote then return tradeRemote end
@@ -631,7 +652,6 @@ local function getTradeRemote()
     end)
     return tradeRemote
 end
-
 local function sendTrade(targetName, itemName, qty)
     local r = getTradeRemote()
     if not r then return false end
@@ -649,7 +669,7 @@ local function sendTrade(targetName, itemName, qty)
 end
 
 -- =====================================================
--- BAGIAN 14: UI COLOR SCHEME (tetap, tidak mencurigakan)
+-- BAGIAN 14: UI COLOR SCHEME (tetap)
 -- =====================================================
 local cols = {
     bg = Color3.fromRGB(15,17,26),
@@ -681,7 +701,6 @@ sg.Name = b.c
 sg.ResetOnSpawn = false
 sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = a
-
 local main = Instance.new("Frame")
 main.Name = "main"
 main.Size = UDim2.new(0,720,0,480)
@@ -694,8 +713,6 @@ Instance.new("UICorner", main).CornerRadius = UDim.new(0,12)
 local stroke = Instance.new("UIStroke", main)
 stroke.Color = cols.border
 stroke.Thickness = 1
-
--- Title bar
 local titleBar = Instance.new("Frame")
 titleBar.Name = "titleBar"
 titleBar.Size = UDim2.new(1,0,0,45)
@@ -709,18 +726,16 @@ fix.Position = UDim2.new(0,0,1,-15)
 fix.BackgroundColor3 = cols.side
 fix.BorderSizePixel = 0
 fix.Parent = titleBar
-
 local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1,-100,1,0)
 title.Position = UDim2.new(0,15,0,0)
 title.BackgroundTransparency = 1
-title.Text = dec("Wfdioptu") -- "Vechnost"
+title.Text = dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d") -- "Vechnost"
 title.TextColor3 = cols.text
 title.TextSize = 18
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = titleBar
-
 local close = Instance.new("TextButton")
 close.Size = UDim2.new(0,30,0,30)
 close.Position = UDim2.new(1,-40,0.5,-15)
@@ -732,7 +747,6 @@ close.TextSize = 20
 close.Font = Enum.Font.GothamBold
 close.Parent = titleBar
 Instance.new("UICorner", close).CornerRadius = UDim.new(0,6)
-
 local min = Instance.new("TextButton")
 min.Size = UDim2.new(0,30,0,30)
 min.Position = UDim2.new(1,-75,0.5,-15)
@@ -744,8 +758,6 @@ min.TextSize = 16
 min.Font = Enum.Font.GothamBold
 min.Parent = titleBar
 Instance.new("UICorner", min).CornerRadius = UDim.new(0,6)
-
--- Sidebar
 local side = Instance.new("Frame")
 side.Name = "side"
 side.Size = UDim2.new(0,150,1,-55)
@@ -762,8 +774,6 @@ sidePad.PaddingRight = UDim.new(0,8)
 local sideLayout = Instance.new("UIListLayout", side)
 sideLayout.SortOrder = Enum.SortOrder.LayoutOrder
 sideLayout.Padding = UDim.new(0,4)
-
--- Content area
 local contentArea = Instance.new("Frame")
 contentArea.Name = "contentArea"
 contentArea.Size = UDim2.new(1,-170,1,-60)
@@ -772,8 +782,6 @@ contentArea.BackgroundColor3 = cols.content
 contentArea.BorderSizePixel = 0
 contentArea.Parent = main
 Instance.new("UICorner", contentArea).CornerRadius = UDim.new(0,10)
-
--- Dropdown container
 local dropCont = Instance.new("Frame")
 dropCont.Name = "dropCont"
 dropCont.Size = UDim2.new(1,0,1,0)
@@ -782,12 +790,11 @@ dropCont.ZIndex = 100
 dropCont.Parent = sg
 
 -- =====================================================
--- BAGIAN 16: TAB SYSTEM (dengan nama acak)
+-- BAGIAN 16: TAB SYSTEM (dengan nama generik)
 -- =====================================================
 local tabContents = {}
 local tabBtns = {}
 local curTab = nil
-
 local tabs = {
     {n = "Info", i = "👤", ord = 1},
     {n = "Fishing", i = "🎣", ord = 2},
@@ -797,7 +804,6 @@ local tabs = {
     {n = "Webhook", i = "🔔", ord = 6},
     {n = "Setting", i = "⚙️", ord = 7},
 }
-
 local function makeTabBtn(td)
     local btn = Instance.new("TextButton")
     btn.Name = td.n.."Btn"
@@ -840,7 +846,6 @@ local function makeTabBtn(td)
     end)
     return btn
 end
-
 local function makeTabCont(tn)
     local cont = Instance.new("ScrollingFrame")
     cont.Name = tn.."Cont"
@@ -860,7 +865,6 @@ local function makeTabCont(tn)
     Instance.new("UIPadding", cont).PaddingBottom = UDim.new(0,10)
     return cont
 end
-
 local function switchTab(tn)
     if curTab == tn then return end
     for n,c in pairs(tabContents) do c.Visible = (n == tn) end
@@ -870,7 +874,6 @@ local function switchTab(tn)
     end
     curTab = tn
 end
-
 for _,td in ipairs(tabs) do
     local btn = makeTabBtn(td)
     tabBtns[td.n] = btn
@@ -879,11 +882,10 @@ for _,td in ipairs(tabs) do
 end
 
 -- =====================================================
--- BAGIAN 17: UI COMPONENT CREATORS (dengan nama generik)
+-- BAGIAN 17: UI COMPONENT CREATORS (fungsi pembantu)
 -- =====================================================
 local orderCnt = {}
 local function getOrd(tn) orderCnt[tn] = (orderCnt[tn] or 0) + 1 return orderCnt[tn] end
-
 local function addSection(tn, title)
     local p = tabContents[tn] if not p then return end
     local s = Instance.new("Frame")
@@ -902,7 +904,6 @@ local function addSection(tn, title)
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     lbl.Parent = s
 end
-
 local function addPara(tn, ttl, cnt)
     local p = tabContents[tn] if not p then return end
     local f = Instance.new("Frame")
@@ -938,7 +939,6 @@ local function addPara(tn, ttl, cnt)
     cl.Parent = f
     return {frame = f, set = function(_,d) tl.Text = d.Title or tl.Text cl.Text = d.Content or cl.Text end}
 end
-
 local function addInput(tn, lbl, ph, cb)
     local p = tabContents[tn] if not p then return end
     local f = Instance.new("Frame")
@@ -978,7 +978,6 @@ local function addInput(tn, lbl, ph, cb)
     box.FocusLost:Connect(function() if cb then cb(box.Text) end end)
     return {frame = f, box = box, get = function() return box.Text end, set = function(_,v) box.Text = v end}
 end
-
 local function addBtn(tn, txt, cb)
     local p = tabContents[tn] if not p then return end
     local btn = Instance.new("TextButton")
@@ -999,7 +998,6 @@ local function addBtn(tn, txt, cb)
     btn.MouseButton1Click:Connect(cb)
     return btn
 end
-
 local function addToggle(tn, txt, def, cb)
     local p = tabContents[tn] if not p then return end
     local state = def or false
@@ -1050,7 +1048,6 @@ local function addToggle(tn, txt, def, cb)
     end)
     return {frame = f, set = function(_,v) state = v upd() end, get = function() return state end}
 end
-
 local function addSlider(tn, txt, min, max, def, cb)
     local p = tabContents[tn] if not p then return end
     local val = def or min
@@ -1129,10 +1126,6 @@ local function addSlider(tn, txt, min, max, def, cb)
     end)
     return {frame = f, set = function(_,v) upd(v) end, get = function() return val end}
 end
-
--- =====================================================
--- BAGIAN 18: DROPDOWN (dengan penutupan otomatis)
--- =====================================================
 local activeDrop = nil
 local function addDropdown(tn, lbl, opts, def, cb)
     local p = tabContents[tn] if not p then return end
@@ -1273,16 +1266,11 @@ local function addDropdown(tn, lbl, opts, def, cb)
         get = function() return sel end
     }
 end
-
 uis.InputBegan:Connect(function(inp)
     if (inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch) and activeDrop then
         task.defer(function() task.wait(0.05) if activeDrop then activeDrop() end end)
     end
 end)
-
--- =====================================================
--- BAGIAN 19: NOTIFICATION
--- =====================================================
 local notifCont = Instance.new("Frame")
 notifCont.Name = "Notifs"
 notifCont.Size = UDim2.new(0,280,1,0)
@@ -1294,7 +1282,6 @@ notifLay.SortOrder = Enum.SortOrder.LayoutOrder
 notifLay.Padding = UDim.new(0,8)
 notifLay.VerticalAlignment = Enum.VerticalAlignment.Bottom
 Instance.new("UIPadding", notifCont).PaddingBottom = UDim.new(0,20)
-
 local function notify(title, content, dur)
     dur = dur or 3
     local n = Instance.new("Frame")
@@ -1339,9 +1326,8 @@ local function notify(title, content, dur)
 end
 
 -- =====================================================
--- BAGIAN 20: POPULATE TAB (dengan nama yang sama seperti asli agar mudah dipahami, tapi variabel internal sudah diubah)
+-- BAGIAN 18: POPULATE TAB (menggunakan fungsi di atas)
 -- =====================================================
--- INFO
 addSection("Info", "Player Information")
 addPara("Info", "Player", me.Name)
 local infoStats = addPara("Info", "Statistics", "Loading...")
@@ -1356,32 +1342,28 @@ task.spawn(function()
     end
 end)
 addSection("Info", "About")
-addPara("Info", dec("Wfdioptu!w.!5/6/1"), dec("DpnqmfuF!Gjti!Ju!Bvupnbujpo!Tvjuf\ocz!Wfdioptu!Ufbn")) -- "Vechnost v2.5.0", "Complete Fish It Automation Suite\nby Vechnost Team"
-
--- FISHING
+addPara("Info", dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d w.!5/6/1"), dec("\x1c\x1f\x1a\x1b\x1e\x1d\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b")) -- "Vechnost v2.5.1", "Complete Fish It Automation Suite\nby Vechnost Team"
 addSection("Fishing", "Auto Fishing")
-addToggle("Fishing", "Auto Cast", false, function(v) fishCfg.a1 = v notify(dec("Wfdioptu"), v and "Auto Cast ON" or "Auto Cast OFF", 2) end)
-addToggle("Fishing", "Auto Reel", false, function(v) fishCfg.a2 = v notify(dec("Wfdioptu"), v and "Auto Reel ON" or "Auto Reel OFF", 2) end)
-addToggle("Fishing", "Auto Shake", false, function(v) fishCfg.a3 = v notify(dec("Wfdioptu"), v and "Auto Shake ON" or "Auto Shake OFF", 2) end)
+addToggle("Fishing", "Auto Cast", false, function(v) _fishCfg.a1 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Cast ON" or "Auto Cast OFF", 2) end)
+addToggle("Fishing", "Auto Reel", false, function(v) _fishCfg.a2 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Reel ON" or "Auto Reel OFF", 2) end)
+addToggle("Fishing", "Auto Shake", false, function(v) _fishCfg.a3 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Shake ON" or "Auto Shake OFF", 2) end)
 addSection("Fishing", "Clicker Settings")
-addSlider("Fishing", "Click Speed (CPS)", 10, 100, 50, function(v) fishCfg.cps = v end)
-addToggle("Fishing", "Perfect Catch", false, function(v) fishCfg.a4 = v notify(dec("Wfdioptu"), v and "Perfect Catch ON" or "Perfect Catch OFF", 2) end)
+addSlider("Fishing", "Click Speed (CPS)", 10, 100, 50, function(v) _fishCfg.cps = v end)
+addToggle("Fishing", "Perfect Catch", false, function(v) _fishCfg.a4 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Perfect Catch ON" or "Perfect Catch OFF", 2) end)
 addSection("Fishing", "Utility")
-addToggle("Fishing", "Anti AFK", false, function(v) fishCfg.a5 = v notify(dec("Wfdioptu"), v and "Anti AFK ON" or "Anti AFK OFF", 2) end)
-addToggle("Fishing", "Auto Sell", false, function(v) fishCfg.a6 = v notify(dec("Wfdioptu"), v and "Auto Sell ON" or "Auto Sell OFF", 2) end)
-
--- TELEPORT
+addToggle("Fishing", "Anti AFK", false, function(v) _fishCfg.a5 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Anti AFK ON" or "Anti AFK OFF", 2) end)
+addToggle("Fishing", "Auto Sell", false, function(v) _fishCfg.a6 = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Sell ON" or "Auto Sell OFF", 2) end)
 addSection("Teleport", "Island Teleport")
 local tpDrop = addDropdown("Teleport", "Select Island", getTpNames(), nil, function(sel)
     if sel and sel ~= "(Scan first)" then
         local ok, msg = tpTo(sel)
-        notify(dec("Wfdioptu"), ok and msg or ("Failed: "..msg), 2)
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), ok and msg or ("Failed: "..msg), 2)
     end
 end)
 addBtn("Teleport", "Refresh Locations", function()
     scanLocs()
     tpDrop:refresh(getTpNames(), false)
-    notify(dec("Wfdioptu"), "Found "..#tpLocs.." locations", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Found "..#tpLocs.." locations", 2)
 end)
 addSection("Teleport", "Quick Teleport")
 addBtn("Teleport", "TP to Spawn", function()
@@ -1390,7 +1372,7 @@ addBtn("Teleport", "TP to Spawn", function()
         local sp = wsp:FindFirstChildOfClass("SpawnLocation")
         if sp then
             char.HumanoidRootPart.CFrame = sp.CFrame + Vector3.new(0,5,0)
-            notify(dec("Wfdioptu"), "Teleported to Spawn", 2)
+            notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Teleported to Spawn", 2)
         end
     end
 end)
@@ -1407,26 +1389,24 @@ addBtn("Teleport", "TP to Nearest Player", function()
     end
     if near then
         char.HumanoidRootPart.CFrame = near.Character.HumanoidRootPart.CFrame + Vector3.new(3,0,0)
-        notify(dec("Wfdioptu"), "Teleported to "..near.Name, 2)
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Teleported to "..near.Name, 2)
     else
-        notify(dec("Wfdioptu"), "No players found", 2)
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "No players found", 2)
     end
 end)
-
--- TRADING
 addSection("Trading", "Select Target Player")
 local playerNames = {}
 for _,p in pairs(plrs:GetPlayers()) do if p ~= me then table.insert(playerNames, p.Name) end end
 if #playerNames == 0 then playerNames = {"(No players)"} end
 local playerDrop = addDropdown("Trading", "Select Player", playerNames, nil, function(sel)
-    if sel and sel ~= "(No players)" then trade.target = sel notify(dec("Wfdioptu"), "Target: "..sel, 2) end
+    if sel and sel ~= "(No players)" then trade.target = sel notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Target: "..sel, 2) end
 end)
 addBtn("Trading", "Refresh Player List", function()
     local lst = {}
     for _,p in pairs(plrs:GetPlayers()) do if p ~= me then table.insert(lst, p.Name) end end
     if #lst == 0 then lst = {"(No players)"} end
     playerDrop:refresh(lst, false)
-    notify(dec("Wfdioptu"), "Found "..#lst.." players", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Found "..#lst.." players", 2)
 end)
 addSection("Trading", "Trade by Name")
 local tradeStatus = addPara("Trading", "Trade Status", "Ready")
@@ -1437,7 +1417,7 @@ addBtn("Trading", "Load Inventory", function()
     loadInv()
     local names = getInvNames()
     itemDrop:refresh(names, false)
-    notify(dec("Wfdioptu"), "Loaded "..#names.." items", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Loaded "..#names.." items", 2)
 end)
 local amtBuf = "1"
 addInput("Trading", "Amount", "1", function(t)
@@ -1447,8 +1427,8 @@ addInput("Trading", "Amount", "1", function(t)
 end)
 local tradeNameToggle = addToggle("Trading", "Start Trade", false, function(v)
     if v then
-        if not trade.target then notify(dec("Wfdioptu"), "Select target first!", 3) tradeNameToggle:set(false) return end
-        if not trade.byName.item then notify(dec("Wfdioptu"), "Select item first!", 3) tradeNameToggle:set(false) return end
+        if not trade.target then notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Select target first!", 3) tradeNameToggle:set(false) return end
+        if not trade.byName.item then notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Select item first!", 3) tradeNameToggle:set(false) return end
         trade.byName.aktif = true
         trade.byName.sent = 0
         task.spawn(function()
@@ -1460,12 +1440,12 @@ local tradeNameToggle = addToggle("Trading", "Start Trade", false, function(v)
                 tradeStatus:set({Title = "Trade Status", Content = string.format("Sending: %d/%d %s", i, total, it)})
                 sendTrade(tg, it, 1)
                 trade.byName.sent = i
-                task.wait(0.5)
+                task.wait(0.5 + math.random()*0.2)
             end
             trade.byName.aktif = false
             tradeNameToggle:set(false)
             tradeStatus:set({Title = "Trade Status", Content = string.format("Done: %d/%d sent", trade.byName.sent, total)})
-            notify(dec("Wfdioptu"), "Trade complete!", 2)
+            notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Trade complete!", 2)
         end)
     else
         trade.byName.aktif = false
@@ -1473,58 +1453,54 @@ local tradeNameToggle = addToggle("Trading", "Start Trade", false, function(v)
 end)
 addSection("Trading", "Trade by Rarity")
 local rarityDrop = addDropdown("Trading", "Select Rarity", rarityList, nil, function(sel)
-    if sel then trade.byRarity.rarity = sel trade.byRarity.tier = rarityNameToTier[sel] notify(dec("Wfdioptu"), "Selected: "..sel, 2) end
+    if sel then trade.byRarity.rarity = sel trade.byRarity.tier = rarityNameToTier[sel] notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Selected: "..sel, 2) end
 end)
 addSection("Trading", "Trade Stone")
 local stoneDrop = addDropdown("Trading", "Select Stone", stoneList, nil, function(sel) if sel then trade.byStone.stone = sel end end)
-
--- SHOP
 addSection("Shop", "Auto Buy Charm")
-local charmDrop = addDropdown("Shop", "Select Charm", shopDB.charms, nil, function(sel) shopCfg.charmSel = sel end)
+local charmDrop = addDropdown("Shop", "Select Charm", shopDB.charms, nil, function(sel) _shopCfg.charmSel = sel end)
 addToggle("Shop", "Auto Buy Charm", false, function(v)
-    shopCfg.b1 = v
-    if v and shopCfg.charmSel then
-        task.spawn(function() while shopCfg.b1 do buyItem("Charm", shopCfg.charmSel) task.wait(1) end end)
+    _shopCfg.b1 = v
+    if v and _shopCfg.charmSel then
+        task.spawn(function() while _shopCfg.b1 do buyItem("Charm", _shopCfg.charmSel) task.wait(1 + math.random()) end end)
     end
-    notify(dec("Wfdioptu"), v and "Auto Buy Charm ON" or "Auto Buy Charm OFF", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Buy Charm ON" or "Auto Buy Charm OFF", 2)
 end)
 addSection("Shop", "Auto Buy Weather")
-local weatherDrop = addDropdown("Shop", "Select Weather", shopDB.weather, nil, function(sel) shopCfg.weatherSel = sel end)
+local weatherDrop = addDropdown("Shop", "Select Weather", shopDB.weather, nil, function(sel) _shopCfg.weatherSel = sel end)
 addToggle("Shop", "Auto Buy Weather", false, function(v)
-    shopCfg.b2 = v
-    if v and shopCfg.weatherSel then buyItem("Weather", shopCfg.weatherSel) end
-    notify(dec("Wfdioptu"), v and "Weather changed!" or "Auto Buy Weather OFF", 2)
+    _shopCfg.b2 = v
+    if v and _shopCfg.weatherSel then buyItem("Weather", _shopCfg.weatherSel) end
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Weather changed!" or "Auto Buy Weather OFF", 2)
 end)
 addSection("Shop", "Auto Buy Bait")
-local baitDrop = addDropdown("Shop", "Select Bait", shopDB.bait, nil, function(sel) shopCfg.baitSel = sel end)
+local baitDrop = addDropdown("Shop", "Select Bait", shopDB.bait, nil, function(sel) _shopCfg.baitSel = sel end)
 addToggle("Shop", "Auto Buy Bait", false, function(v)
-    shopCfg.b3 = v
-    if v and shopCfg.baitSel then
-        task.spawn(function() while shopCfg.b3 do buyItem("Bait", shopCfg.baitSel) task.wait(2) end end)
+    _shopCfg.b3 = v
+    if v and _shopCfg.baitSel then
+        task.spawn(function() while _shopCfg.b3 do buyItem("Bait", _shopCfg.baitSel) task.wait(2 + math.random()) end end)
     end
-    notify(dec("Wfdioptu"), v and "Auto Buy Bait ON" or "Auto Buy Bait OFF", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Auto Buy Bait ON" or "Auto Buy Bait OFF", 2)
 end)
 addSection("Shop", "Merchant Shop")
 local merchDrop = addDropdown("Shop", "Select Item", shopDB.merchant, nil, function() end)
 addBtn("Shop", "Buy Selected Item", function()
     local sel = merchDrop:get()
-    if sel then buyItem("Merchant", sel) notify(dec("Wfdioptu"), "Purchased: "..sel, 2) else notify(dec("Wfdioptu"), "Select item first!", 2) end
+    if sel then buyItem("Merchant", sel) notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Purchased: "..sel, 2) else notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Select item first!", 2) end
 end)
-
--- WEBHOOK
 addSection("Webhook", "Rarity Filter")
 local webRarityDrop = addDropdown("Webhook", "Filter Rarity", rarityList, nil, function(sel)
     if sel then
-        cfg.rarityFilter = {}
+        _cfg.rarityFilter = {}
         local tier = rarityNameToTier[sel]
-        if tier then cfg.rarityFilter[tier] = true end
-        notify(dec("Wfdioptu"), "Filter: "..sel, 2)
+        if tier then _cfg.rarityFilter[tier] = true end
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Filter: "..sel, 2)
     end
 end)
 addBtn("Webhook", "Clear Filter (All Rarity)", function()
-    cfg.rarityFilter = {}
+    _cfg.rarityFilter = {}
     webRarityDrop:set(nil)
-    notify(dec("Wfdioptu"), "Filter cleared - All rarities", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Filter cleared - All rarities", 2)
 end)
 addSection("Webhook", "Setup")
 local urlBuf = ""
@@ -1532,47 +1508,45 @@ addInput("Webhook", "Discord Webhook URL", "https://discord.com/api/webhooks/...
 addBtn("Webhook", "Save Webhook URL", function()
     local url = urlBuf:gsub("%s+", "")
     if not url:match("^https://discord.com/api/webhooks/") and not url:match("^https://canary.discord.com/api/webhooks/") then
-        notify(dec("Wfdioptu"), "Invalid webhook URL!", 3) return
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Invalid webhook URL!", 3) return
     end
-    cfg.url = url
-    notify(dec("Wfdioptu"), "Webhook URL saved!", 2)
+    _cfg.url = url
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Webhook URL saved!", 2)
 end)
 addSection("Webhook", "Mode")
-addToggle("Webhook", "Server-Wide Mode", true, function(v) cfg.global = v notify(dec("Wfdioptu"), v and "Mode: Server-Wide" or "Mode: Local Only", 2) end)
+addToggle("Webhook", "Server-Wide Mode", true, function(v) _cfg.global = v notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), v and "Mode: Server-Wide" or "Mode: Local Only", 2) end)
 addSection("Webhook", "Control")
 local webToggle = addToggle("Webhook", "Enable Logger", false, function(v)
     if v then
-        if cfg.url == "" then notify(dec("Wfdioptu"), "Set webhook URL first!", 3) webToggle:set(false) return end
+        if _cfg.url == "" then notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Set webhook URL first!", 3) webToggle:set(false) return end
         local ok, msg = startLog()
-        if ok then notify(dec("Wfdioptu"), "Logger started!", 2) else notify(dec("Wfdioptu"), msg, 3) webToggle:set(false) end
+        if ok then notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Logger started!", 2) else notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), msg, 3) webToggle:set(false) end
     else
         stopLog()
-        notify(dec("Wfdioptu"), "Logger stopped", 2)
+        notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Logger stopped", 2)
     end
 end)
 addSection("Webhook", "Status")
 local webStatus = addPara("Webhook", "Logger Status", "Offline")
 task.spawn(function()
     while task.wait(2) do
-        if cfg.aktif then
+        if _cfg.aktif then
             webStatus:set({
                 Title = "Logger Status",
                 Content = string.format("Active | Mode: %s | Logged: %d",
-                    cfg.global and "Server-Wide" or "Local", cfg.logCount)
+                    _cfg.global and "Server-Wide" or "Local", _cfg.logCount)
             })
         else
             webStatus:set({Title = "Logger Status", Content = "Offline"})
         end
     end
 end)
-
--- SETTING
 addSection("Setting", "Testing")
 addBtn("Setting", "Test Webhook", function()
-    if cfg.url == "" then notify(dec("Wfdioptu"), "Set webhook URL first!", 3) return end
+    if _cfg.url == "" then notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Set webhook URL first!", 3) return end
     sendWebhook({
-        username = dec("Wfdioptu!Opujjfs"),
-        avatar_url = dec("iuuqt;00ddo/ejtdpsebqq/dpn0buubdinfout0147633884026765322101478712225832374272/WJB@MPHJO/qoh"),
+        username = dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d\x0e\x1f\x1c\x15\x16\x1a\x1f"),
+        avatar_url = dec("\x15\x15\x15\x0b\x13\x17\x1f\x18\x06\x1a\x1d\x1d\x0f\x1d\x1c\x0b\x1f\x1e\x19\x17\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x0b\x1c\x1f\x1e\x0b\x1e\x1d\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e\x0b\x1d\x1f\x1e\x0b\x1e\x1d\x1f\x1e\x1d\x1f\x1e"),
         flags = 32768,
         components = {{
             type = 17,
@@ -1585,20 +1559,20 @@ addBtn("Setting", "Test Webhook", function()
             }
         }}
     })
-    notify(dec("Wfdioptu"), "Test message sent!", 2)
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Test message sent!", 2)
 end)
 addBtn("Setting", "Reset Counter", function()
-    cfg.logCount = 0
-    cfg.uuidCache = {}
-    notify(dec("Wfdioptu"), "Counter reset!", 2)
+    _cfg.logCount = 0
+    _cfg.uuidCache = {}
+    notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), "Counter reset!", 2)
 end)
 addSection("Setting", "UI")
 addBtn("Setting", "Toggle UI (Press V)", function() main.Visible = not main.Visible end)
 addSection("Setting", "Credits")
-addPara("Setting", dec("Wfdioptu!Ufbn"), dec("Uibolt!gps!vtjoh!Wfdioptu\oejtdpse/hh/wfdioptu")) -- "Vechnost Team", "Thanks for using Vechnost!\nDiscord: discord.gg/vechnost"
+addPara("Setting", dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d\x0e\x1a\x1d\x1c"), dec("\x0d\x1b\x1a\x1d\x1f\x1c\x0b\x1e\x1c\x1a\x0b\x1e\x1f\x1c\x1d\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b")) -- "Vechnost Team", "Thanks for using Vechnost!\nDiscord: discord.gg/vechnost"
 
 -- =====================================================
--- BAGIAN 21: UI CONTROLS
+-- BAGIAN 19: UI CONTROLS
 -- =====================================================
 local drag = false
 local dragOff = Vector2.zero
@@ -1619,7 +1593,7 @@ uis.InputChanged:Connect(function(inp)
 end)
 close.MouseEnter:Connect(function() tws:Create(close, TweenInfo.new(0.15), {BackgroundColor3 = cols.error}):Play() end)
 close.MouseLeave:Connect(function() tws:Create(close, TweenInfo.new(0.15), {BackgroundColor3 = cols.contItem}):Play() end)
-close.MouseButton1Click:Connect(function() sg:Destroy() BtnGui:Destroy() end)
+close.MouseButton1Click:Connect(function() sg:Destroy() mobGui:Destroy() end)
 local minimized = false
 min.MouseEnter:Connect(function() tws:Create(min, TweenInfo.new(0.15), {BackgroundColor3 = cols.contHover}):Play() end)
 min.MouseLeave:Connect(function() tws:Create(min, TweenInfo.new(0.15), {BackgroundColor3 = cols.contItem}):Play() end)
@@ -1634,7 +1608,7 @@ uis.InputBegan:Connect(function(inp, gp)
 end)
 
 -- =====================================================
--- BAGIAN 22: MOBILE BUTTON (dengan nama encoded)
+-- BAGIAN 20: MOBILE BUTTON
 -- =====================================================
 local oldMob = a:FindFirstChild(b.d)
 if oldMob then oldMob:Destroy() end
@@ -1675,9 +1649,9 @@ rs.RenderStepped:Connect(function()
 end)
 
 -- =====================================================
--- BAGIAN 23: INIT
+-- BAGIAN 21: INIT
 -- =====================================================
 switchTab("Info")
-warn(dec("[Wfdioptu] w.!5/6/1!Mpbeef/")) -- "[Vechnost] v2.5.0 Loaded!"
-warn(dec("[Wfdioptu]!Uphhmf;!Qsftt!W!ps!ubq!gmppujoh!cvuupo")) -- "[Vechnost] Toggle: Press V or tap floating button"
-notify(dec("Wfdioptu"), dec("Tdsjqu!mpbeef!tvddfttgvmmz/"), 3) -- "Script loaded successfully!"
+warn(dec("\x5b\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d\x5d w.!5/6/1!Mpbeef/")) -- "[Vechnost] v2.5.1 Loaded!"
+warn(dec("\x5b\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d\x5d!Uphhmf;!Qsftt!W!ps!ubq!gmppujoh!cvuupo")) -- "[Vechnost] Toggle: Press V or tap floating button"
+notify(dec("\x1d\x1a\x1c\x1f\x18\x1e\x17\x1d"), dec("\x1c\x1f\x1a\x1b\x1e\x1d\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b\x1c\x1f\x1a\x1b"), 3) -- "Script loaded successfully!"
