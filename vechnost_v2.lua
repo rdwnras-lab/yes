@@ -91,20 +91,18 @@ local Settings = {
     Url = "",
     SentUUID = {},
     SelectedRarities = {},
-    ServerWide = true,
+    ServerWide = false,  -- Local only
     LogCount = 0,
-    -- Player Logs
-    LogPlayerJoin = false,
-    LogPlayerLeave = false,
-    -- Automation
-    AutoClick = false,
-    AntiAFK = false,
+    -- Main Features
+    AutoUseRod = false,
+    AutoSell = false,
     DisablePopups = false,
-    PingMonitor = false,
+    DisableMinigame = false,
+    LegitFishing = false,
+    -- Utility (backend-only)
+    AntiAFK = false,
     AutoReconnect = false,
-    -- Exploits
-    InstantCatch = false,
-    AutoSellAll = false,
+    PingMonitor = false,
 }
 
 -- =====================================================
@@ -1125,36 +1123,7 @@ local function StartLogger()
         end
 
         Connections[#Connections + 1] = Players.PlayerAdded:Connect(function(newPlayer)
-            if Settings.LogPlayerJoin and Settings.Url ~= "" then
-                local avatarUrl = PROXY .. "/avatar/" .. tostring(newPlayer.UserId)
-                SendWebhook({
-                    username = "Vechnost Alert",
-                    avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-                    embeds = {{
-                        title = "✅ PLAYER JOINED SERVER",
-                        description = "**Username:** `" .. newPlayer.Name .. "`",
-                        color = 65280,
-                        thumbnail = { url = avatarUrl }
-                    }}
-                })
-            end
             WatchBackpack(newPlayer)
-        end)
-
-        Connections[#Connections + 1] = Players.PlayerRemoving:Connect(function(leftPlayer)
-            if Settings.LogPlayerLeave and Settings.Url ~= "" then
-                local avatarUrl = PROXY .. "/avatar/" .. tostring(leftPlayer.UserId)
-                SendWebhook({
-                    username = "Vechnost Alert",
-                    avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-                    embeds = {{
-                        title = "👋 PLAYER LEFT SERVER",
-                        description = "**Username:** `" .. leftPlayer.Name .. "`",
-                        color = 16729344,
-                        thumbnail = { url = avatarUrl }
-                    }}
-                })
-            end
         end)
 
         -- Watch existing players' backpack too
@@ -1163,13 +1132,12 @@ local function StartLogger()
         end
     end
 
-    -- Send activation message (Components V2)
+    -- Send activation message
     task.spawn(function()
-        local mode = Settings.ServerWide and "Server Notifier" or "Local Only"
-        SendWebhook(BuildActivationPayload(LocalPlayer.Name, mode))
+        SendWebhook(BuildActivationPayload(LocalPlayer.Name, "Local"))
     end)
 
-    warn("[Vechnost] Webhook Logger ENABLED | Mode:", Settings.ServerWide and "Server-Notifier" or "Local")
+    warn("[Vechnost] Webhook Logger ENABLED | Mode: Local")
 end
 
 local function StopLogger()
@@ -1189,7 +1157,18 @@ end
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 
--- 1. Anti-AFK
+-- Helper: get rnet reference
+local function getRnet()
+    local pkg = game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
+    if not pkg then return nil end
+    local idx = pkg:FindFirstChild("_Index")
+    if not idx then return nil end
+    local sleit = idx:FindFirstChild("sleitnick_net@0.2.0")
+    if not sleit then return nil end
+    return sleit:FindFirstChild("net")
+end
+
+-- 1. Anti-AFK (backend, no UI toggle)
 local afkConn = Players.LocalPlayer.Idled:Connect(function()
     if Settings.AntiAFK then
         pcall(function() UserInputService.InputBegan:Fire(Enum.KeyCode.F20, false) end)
@@ -1201,7 +1180,28 @@ if getconnections then
     end
 end
 
--- 2. Auto Click Fishing
+-- 2. Auto Use Rod (baru) - equip + cast rod otomatis
+task.spawn(function()
+    while true do
+        task.wait(0.6)
+        if Settings.AutoUseRod then
+            pcall(function()
+                local rnet = getRnet()
+                if rnet then
+                    local equipEnv = rnet:FindFirstChild("RE/EquipToolFromHotbar")
+                    local chargeEnv = rnet:FindFirstChild("RF/ChargeFishingRod")
+                    if equipEnv and chargeEnv then
+                        equipEnv:FireServer()
+                        task.wait(0.2)
+                        chargeEnv:InvokeServer(1)
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- 3. Legit Fishing (auto cast + auto click, dengan delay acak)
 task.spawn(function()
     local FishingController = nil
     pcall(function()
@@ -1209,18 +1209,46 @@ task.spawn(function()
     end)
     while true do
         task.wait(0.1)
-        if Settings.AutoClick and FishingController then
-            local randomDelay = math.random(80, 150) / 1000
-            pcall(function() FishingController:RequestFishingMinigameClick() end)
-            task.wait(randomDelay)
+        if Settings.LegitFishing then
+            -- Auto click minigame dengan delay acak agar terlihat natural
+            if FishingController then
+                pcall(function() FishingController:RequestFishingMinigameClick() end)
+                task.wait(math.random(80, 180) / 1000)
+            end
+            -- Auto cast jika tidak sedang memancing
+            pcall(function()
+                local rnet = getRnet()
+                if rnet then
+                    local chargeEnv = rnet:FindFirstChild("RF/ChargeFishingRod")
+                    if chargeEnv then chargeEnv:InvokeServer(1) end
+                end
+            end)
         end
     end
 end)
 
--- 3. Block Notifications
+-- 4. Disable Minigame - langsung complete saat minigame aktif
 task.spawn(function()
-    local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
-    local SmallNotification = PlayerGui and PlayerGui:WaitForChild("Small Notification", 10)
+    while true do
+        task.wait(0.15)
+        if Settings.DisableMinigame then
+            pcall(function()
+                local rnet = getRnet()
+                if rnet then
+                    local completeEnv = rnet:FindFirstChild("RE/FishingCompleted")
+                    if completeEnv then
+                        completeEnv:FireServer()
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- 5. Block Notifications
+task.spawn(function()
+    local _pg = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+    local SmallNotification = _pg and _pg:WaitForChild("Small Notification", 10)
     RunService.RenderStepped:Connect(function()
         if Settings.DisablePopups and SmallNotification then
             pcall(function() SmallNotification.Enabled = false end)
@@ -1228,7 +1256,30 @@ task.spawn(function()
     end)
 end)
 
--- 4. Ping Monitor
+-- 6. Auto Sell (setiap 30 detik)
+task.spawn(function()
+    while true do
+        task.wait(30)
+        if Settings.AutoSell then
+            pcall(function()
+                local rnet = getRnet()
+                if rnet then
+                    local sellEvent = rnet:FindFirstChild("RF/SellAllItems")
+                    if sellEvent then
+                        sellEvent:InvokeServer()
+                        Rayfield:Notify({ Title = "Vechnost", Content = "Auto Sell: Ikan berhasil dijual!", Duration = 2 })
+                    else
+                        -- fallback path
+                        local fallback = game:GetService("ReplicatedStorage"):FindFirstChild("RF/SellAllItems")
+                        if fallback then fallback:InvokeServer() end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- 7. Ping Monitor (backend)
 task.spawn(function()
     local LastPingAlert = 0
     while true do
@@ -1243,7 +1294,7 @@ task.spawn(function()
                         avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
                         embeds = {{
                             title = "⚠️ SERVER LAG ALERT",
-                            description = "```\nHigh Ping Detected: " .. math.floor(ping) .. " ms\n```\nPlayer: `" .. LocalPlayer.Name .. "`",
+                            description = "High Ping: " .. math.floor(ping) .. " ms | Player: " .. LocalPlayer.Name,
                             color = 16776960
                         }}
                     })
@@ -1253,23 +1304,12 @@ task.spawn(function()
     end
 end)
 
--- 5. Auto Reconnect
+-- 8. Auto Reconnect (backend)
 local isReconnecting = false
 local function triggerReconnect(kickMsg)
     if not Settings.AutoReconnect or isReconnecting then return end
     isReconnecting = true
     warn("[Vechnost] Auto Reconnect triggered: " .. tostring(kickMsg))
-    if Settings.Url ~= "" then
-        SendWebhook({
-            username = "Vechnost Alert",
-            avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-            embeds = {{
-                title = "🔌 DISCONNECTED",
-                description = "```\nReason: " .. (kickMsg or "Client Closed") .. "\n```\n⚠️ Auto-Reconnecting soon...",
-                color = 16711680
-            }}
-        })
-    end
     task.wait(5)
     pcall(function()
         if #Players:GetPlayers() <= 1 then
@@ -1279,80 +1319,16 @@ local function triggerReconnect(kickMsg)
         end
     end)
 end
-
-GuiService.ErrorMessageChanged:Connect(function(msg)
-    triggerReconnect(msg)
-end)
-
-local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
-if promptGui then
-    local promptOverlay = promptGui:FindFirstChild("promptOverlay", true)
-    if promptOverlay then
-        promptOverlay.DescendantAdded:Connect(function(child)
-            if child.Name == "ErrorTitle" or child.Name == "ErrorMessage" then
-                task.wait(0.5)
-                triggerReconnect(child.Text)
-            end
-        end)
-    end
-end
-
--- 6. Instant Catch
-task.spawn(function()
-    while true do
-        task.wait(0.1)
-        if Settings.InstantCatch then
-            pcall(function()
-                local net = game:GetService("ReplicatedStorage"):FindFirstChild("Packages")
-                if net then
-                    local index = net:FindFirstChild("_Index")
-                    if index then
-                        local sleitnick = index:FindFirstChild("sleitnick_net@0.2.0")
-                        if sleitnick and sleitnick:FindFirstChild("net") then
-                            local rnet = sleitnick.net
-                            local equipEnv = rnet:FindFirstChild("RE/EquipToolFromHotbar")
-                            local chargeEnv = rnet:FindFirstChild("RF/ChargeFishingRod")
-                            local minigameEnv = rnet:FindFirstChild("RF/RequestFishingMinigameStarted")
-                            local completeEnv = rnet:FindFirstChild("RE/FishingCompleted")
-                            if equipEnv and chargeEnv and minigameEnv and completeEnv then
-                                equipEnv:FireServer()
-                                chargeEnv:InvokeServer(1)
-                                minigameEnv:InvokeServer(1, 1)
-                                completeEnv:FireServer()
-                            end
-                        end
-                    end
-                end
-            end)
-            task.wait(0.2)
-        end
-    end
-end)
-
--- 7. Auto Sell All
-task.spawn(function()
-    while true do
-        task.wait(30)
-        if Settings.AutoSellAll then
-            pcall(function()
-                local sellEvent = game:GetService("ReplicatedStorage"):FindFirstChild("RF/SellAllItems")
-                if sellEvent then
-                    sellEvent:InvokeServer()
-                    Rayfield:Notify({ Title = "Vechnost Auto Sell", Content = "Semua ikan berhasil dijual!", Duration = 3 })
-                end
-            end)
-        end
-    end
-end)
+GuiService.ErrorMessageChanged:Connect(function(msg) triggerReconnect(msg) end)
 
 -- =====================================================
 -- BAGIAN 11: RAYFIELD UI
 -- =====================================================
 local Window = Rayfield:CreateWindow({
     Name = "Vechnost",
-    Icon = "webhook",
-    LoadingTitle = "Vechnost Webhook Notifier",
-    LoadingSubtitle = "v1.0.0",
+    Icon = "fish",
+    LoadingTitle = "Vechnost",
+    LoadingSubtitle = "v2.0.0",
     Theme = "Default",
     ToggleUIKeybind = "V",
     DisableRayfieldPrompts = true,
@@ -1366,7 +1342,7 @@ local Window = Rayfield:CreateWindow({
     KeySettings = {
         Title = "Vechnost Access",
         Subtitle = "Authentication Required",
-        Note = "Join our discord to get key\n https://discord.gg/vechnost",
+        Note = "Join our discord to get key\n https://discord.gg/pFhdW9ZwwY",
         FileName = "VechnostKey",
         SaveKey = true,
         GrabKeyFromSite = false,
@@ -1404,7 +1380,6 @@ Button.MouseButton1Click:Connect(function()
     pcall(function() Rayfield:SetVisibility(windowVisible) end)
 end)
 
--- Drag system
 local dragging = false
 local dragOffset = Vector2.zero
 
@@ -1432,205 +1407,323 @@ RunService.RenderStepped:Connect(function()
     Button.Position = UDim2.fromOffset(cx, cy)
 end)
 
--- BAGIAN 13: TABS & UI ELEMENTS
 -- =====================================================
-local TabWebhook = Window:CreateTab("Webhook Logger", "webhook")
-local TabAutomation = Window:CreateTab("Automation", "bot")
-local TabExploit = Window:CreateTab("Exploits", "sword")
-local TabSettings = Window:CreateTab("Settings", "settings")
+-- BAGIAN 13: TABS (urutan: Info, Main, Teleport, Webhook, Config)
+-- =====================================================
+local TabInfo     = Window:CreateTab("Information", "info")
+local TabMain     = Window:CreateTab("Main",        "home")
+local TabTeleport = Window:CreateTab("Teleport",    "map-pin")
+local TabWebhook  = Window:CreateTab("Webhook",     "send")
+local TabConfig   = Window:CreateTab("Config",      "file")
 
 -- =====================================================
--- AUTOMATION TAB
+-- TAB: INFORMATION
 -- =====================================================
-TabAutomation:CreateSection("Auto Farm Options")
-TabAutomation:CreateToggle({
-    Name = "Auto Click Fishing",
-    CurrentValue = false,
-    Flag = "AutoClick",
-    Callback = function(Value) Settings.AutoClick = Value end
+TabInfo:CreateSection("Vechnost Information")
+
+TabInfo:CreateParagraph({
+    Title = "⚠️ Warning",
+    Content = "Script are under development, use at your own risk!"
 })
-TabAutomation:CreateToggle({
-    Name = "Anti-AFK",
-    CurrentValue = false,
-    Flag = "AntiAFK",
-    Callback = function(Value) Settings.AntiAFK = Value end
+
+TabInfo:CreateSection("Welcome")
+
+local WelcomeParagraph = TabInfo:CreateParagraph({
+    Title = "Welcome / Welcome back, @" .. LocalPlayer.Name,
+    Content = "Loading inventory data..."
 })
-TabAutomation:CreateToggle({
-    Name = "Disable Popups (Small Notifications)",
+
+-- Helper: format angka besar
+local function FormatShort(n)
+    n = tonumber(n) or 0
+    if n >= 1000000000 then return string.format("%.1fb", n / 1000000000)
+    elseif n >= 1000000 then return string.format("%.1fm", n / 1000000)
+    elseif n >= 1000    then return string.format("%.1fk", n / 1000)
+    else return tostring(math.floor(n)) end
+end
+
+-- Update inventory info setiap 5 detik
+task.spawn(function()
+    while true do
+        task.wait(5)
+        pcall(function()
+            local secretCount      = 0
+            local evolvedStoneCount = 0
+            local mythicCoinValue  = 0
+
+            if PlayerData then
+                pcall(function()
+                    local inv = PlayerData:Get("Inventory")
+                    if inv and typeof(inv) == "table" then
+                        local items = inv.Items or inv
+                        for _, item in pairs(items) do
+                            if typeof(item) == "table" then
+                                local itemId   = item.Id or item.id
+                                local itemName = tostring(item.Name or item.name or "")
+                                -- Secret fish (Tier 7)
+                                if itemId and FishDB[itemId] and FishDB[itemId].Tier == 7 then
+                                    secretCount = secretCount + 1
+                                end
+                                -- Mythic fish (Tier 6) -> nilai koin
+                                if itemId and FishDB[itemId] and FishDB[itemId].Tier == 6 then
+                                    mythicCoinValue = mythicCoinValue + (FishDB[itemId].SellPrice or 0)
+                                end
+                                -- Evolved Stone
+                                if string.find(string.lower(itemName), "evolved stone") then
+                                    evolvedStoneCount = evolvedStoneCount + 1
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+
+            WelcomeParagraph:Set({
+                Title = "Welcome / Welcome back, @" .. LocalPlayer.Name,
+                Content = "Your Inventory\n" ..
+                    "Secret : " .. tostring(secretCount) .. "\n" ..
+                    "Coin Via Mitos : " .. FormatShort(mythicCoinValue) .. "\n" ..
+                    "Evolved Stone : " .. tostring(evolvedStoneCount)
+            })
+        end)
+    end
+end)
+
+TabInfo:CreateSection("Join our Community")
+
+TabInfo:CreateButton({
+    Name = "COPY LINK",
+    Callback = function()
+        pcall(function()
+            setclipboard("https://discord.gg/pFhdW9ZwwY")
+        end)
+        Rayfield:Notify({ Title = "Vechnost", Content = "Discord link copied to clipboard!", Duration = 3 })
+    end
+})
+
+TabInfo:CreateSection("Server Tool's")
+
+TabInfo:CreateButton({
+    Name = "Rejoin Server",
+    Callback = function()
+        Rayfield:Notify({ Title = "Vechnost", Content = "Rejoining server...", Duration = 2 })
+        task.wait(1)
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end)
+    end
+})
+
+-- =====================================================
+-- TAB: MAIN
+-- =====================================================
+TabMain:CreateSection("Support Feature")
+
+TabMain:CreateToggle({
+    Name = "Auto Use Rod",
+    CurrentValue = false,
+    Flag = "AutoUseRod",
+    Callback = function(Value)
+        Settings.AutoUseRod = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Use Rod: ON" or "Auto Use Rod: OFF", Duration = 2 })
+    end
+})
+
+TabMain:CreateToggle({
+    Name = "Auto Sell",
+    CurrentValue = false,
+    Flag = "AutoSell",
+    Callback = function(Value)
+        Settings.AutoSell = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Sell: ON (tiap 30s)" or "Auto Sell: OFF", Duration = 2 })
+    end
+})
+
+TabMain:CreateToggle({
+    Name = "Disable Popup",
     CurrentValue = false,
     Flag = "DisablePopups",
-    Callback = function(Value) Settings.DisablePopups = Value end
+    Callback = function(Value)
+        Settings.DisablePopups = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Popup dinonaktifkan" or "Popup diaktifkan", Duration = 2 })
+    end
 })
 
-TabAutomation:CreateSection("Server Monitoring")
-TabAutomation:CreateToggle({
-    Name = "Auto Reconnect on Disconnect",
+TabMain:CreateToggle({
+    Name = "Disable Minigame",
     CurrentValue = false,
-    Flag = "AutoReconnect",
-    Callback = function(Value) Settings.AutoReconnect = Value end
+    Flag = "DisableMinigame",
+    Callback = function(Value)
+        Settings.DisableMinigame = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Disable Minigame: ON" or "Disable Minigame: OFF", Duration = 2 })
+    end
 })
-TabAutomation:CreateToggle({
-    Name = "High Ping Monitor Webhook",
+
+TabMain:CreateSection("Legit Fishing")
+
+TabMain:CreateToggle({
+    Name = "Legit Fishing",
     CurrentValue = false,
-    Flag = "PingMonitor",
-    Callback = function(Value) Settings.PingMonitor = Value end
+    Flag = "LegitFishing",
+    Callback = function(Value)
+        Settings.LegitFishing = Value
+        Rayfield:Notify({
+            Title = "Vechnost",
+            Content = Value and "Legit Fishing: ON (auto cast + auto click)" or "Legit Fishing: OFF",
+            Duration = 2
+        })
+    end
 })
 
 -- =====================================================
--- EXPLOIT TAB
+-- TAB: TELEPORT
 -- =====================================================
-TabExploit:CreateSection("⚠️ Use at your own risk")
+TabTeleport:CreateSection("Teleport")
 
 local teleportLocations = {
     ["🏝️ Fisherman Island"] = Vector3.new(13.06, 24.53, 2911.16),
-    ["🏝️ Tropical Grove"] = Vector3.new(-2092.897, 6.268, 3693.929),
-    ["🏝️ Coral Reefs"] = Vector3.new(-2949.359, 63.25, 2213.966),
-    ["🏝️ Crater Island"] = Vector3.new(1012.045, 22.676, 5080.221),
-    ["🏝️ Kohana"] = Vector3.new(-643.14, 16.03, 623.61),
-    ["🏝️ Kohana Lava"] = Vector3.new(-593.32, 59.0, 130.82),
-    ["🏝️ Ice Island"] = Vector3.new(1766.46, 19.16, 3086.23),
-    ["🏝️ Lost Isle"] = Vector3.new(-3660.07, 5.426, -1053.02),
-    ["⛩️ Sacred Temple"] = Vector3.new(1476.232, -21.850, -630.892),
-    ["⛩️ Ancient Jungle"] = Vector3.new(1281.761, 7.791, -202.018),
-    ["⛩️ Esoteric Depths"] = Vector3.new(2024.49, 27.397, 1391.62),
-    ["⚙️ Weather Machine"] = Vector3.new(-1495.25, 6.5, 1889.92),
-    ["🗿 Sisyphus Statue"] = Vector3.new(-3693.96, -135.57, -1027.28),
-    ["💎 Treasure Hall"] = Vector3.new(-3598.39, -275.82, -1641.46),
-    ["🔄 Enchant Area"] = Vector3.new(3236.12, -1302.855, 1399.491),
+    ["🏝️ Tropical Grove"]   = Vector3.new(-2092.897, 6.268, 3693.929),
+    ["🏝️ Coral Reefs"]      = Vector3.new(-2949.359, 63.25, 2213.966),
+    ["🏝️ Crater Island"]    = Vector3.new(1012.045, 22.676, 5080.221),
+    ["🏝️ Kohana"]           = Vector3.new(-643.14, 16.03, 623.61),
+    ["🏝️ Kohana Lava"]      = Vector3.new(-593.32, 59.0, 130.82),
+    ["🏝️ Ice Island"]       = Vector3.new(1766.46, 19.16, 3086.23),
+    ["🏝️ Lost Isle"]        = Vector3.new(-3660.07, 5.426, -1053.02),
+    ["⛩️ Sacred Temple"]    = Vector3.new(1476.232, -21.850, -630.892),
+    ["⛩️ Ancient Jungle"]   = Vector3.new(1281.761, 7.791, -202.018),
+    ["⛩️ Esoteric Depths"]  = Vector3.new(2024.49, 27.397, 1391.62),
+    ["⚙️ Weather Machine"]  = Vector3.new(-1495.25, 6.5, 1889.92),
+    ["🗿 Sisyphus Statue"]   = Vector3.new(-3693.96, -135.57, -1027.28),
+    ["💎 Treasure Hall"]    = Vector3.new(-3598.39, -275.82, -1641.46),
+    ["🔄 Enchant Area"]     = Vector3.new(3236.12, -1302.855, 1399.491),
 }
 local teleportNames = {}
 for name, _ in pairs(teleportLocations) do table.insert(teleportNames, name) end
 table.sort(teleportNames)
 
-TabExploit:CreateDropdown({
-    Name = "Instant Teleport",
+-- Location dropdown: langsung teleport saat dipilih
+TabTeleport:CreateDropdown({
+    Name = "Location",
     Options = teleportNames,
     CurrentOption = {""},
     MultipleOptions = false,
-    Flag = "Teleporter",
+    Flag = "TeleportLocation",
     Callback = function(Option)
         if Option[1] and Option[1] ~= "" then
             local pos = teleportLocations[Option[1]]
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp and pos then
                 hrp.CFrame = CFrame.new(pos)
-                Rayfield:Notify({ Title = "Teleported", Content = "Berhasil teleport ke " .. Option[1], Duration = 2 })
+                Rayfield:Notify({ Title = "Teleported", Content = "→ " .. Option[1], Duration = 2 })
             end
         end
     end
 })
 
-TabExploit:CreateSection("Fishing Mods")
+-- Player teleport
+local SelectedPlayerTarget = ""
 
-TabExploit:CreateToggle({
-    Name = "Instant Catch (No Minigame)",
-    CurrentValue = false,
-    Flag = "InstantCatch",
-    Callback = function(Value) Settings.InstantCatch = Value end
+local function GetCurrentPlayerNames()
+    local names = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(names, p.Name)
+        end
+    end
+    return names
+end
+
+local function TeleportToPlayer(targetName)
+    local target = Players:FindFirstChild(targetName)
+    if target and target.Character then
+        local hrp    = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local tHrp   = target.Character:FindFirstChild("HumanoidRootPart")
+        if hrp and tHrp then
+            hrp.CFrame = tHrp.CFrame + Vector3.new(3, 0, 0)
+            Rayfield:Notify({ Title = "Teleported", Content = "→ Player: " .. targetName, Duration = 2 })
+            return true
+        end
+    end
+    Rayfield:Notify({ Title = "Vechnost", Content = "Player tidak ditemukan / belum spawn", Duration = 3 })
+    return false
+end
+
+TabTeleport:CreateDropdown({
+    Name = "Player",
+    Options = GetCurrentPlayerNames(),
+    CurrentOption = {""},
+    MultipleOptions = false,
+    Flag = "TeleportPlayer",
+    Callback = function(Option)
+        if Option[1] and Option[1] ~= "" then
+            SelectedPlayerTarget = Option[1]
+            TeleportToPlayer(SelectedPlayerTarget)
+        end
+    end
 })
 
-TabExploit:CreateToggle({
-    Name = "Auto Sell All (Every 30s)",
-    CurrentValue = false,
-    Flag = "AutoSellAll",
-    Callback = function(Value) Settings.AutoSellAll = Value end
+TabTeleport:CreateButton({
+    Name = "Refresh Player",
+    Callback = function()
+        -- Refresh list player saat ini
+        local updated = GetCurrentPlayerNames()
+        Rayfield:Notify({
+            Title = "Vechnost",
+            Content = "Player list refreshed! (" .. tostring(#updated) .. " players)",
+            Duration = 2
+        })
+        -- Jika sudah ada player yang dipilih, teleport ulang
+        if SelectedPlayerTarget ~= "" then
+            TeleportToPlayer(SelectedPlayerTarget)
+        end
+    end
 })
 
--- -- RARITY FILTER --
-TabWebhook:CreateSection("Rarity Filter")
+-- =====================================================
+-- TAB: WEBHOOK
+-- =====================================================
+TabWebhook:CreateSection("Webhook Fish Caught")
 
 TabWebhook:CreateDropdown({
-    Name = "Filter by Rarity",
+    Name = "Filter Rarity",
     Options = RarityList,
     CurrentOption = {},
-    MultipleOptions = true,
+    MultipleOptions = false,
     Flag = "RarityFilter",
-    Callback = function(Options)
+    Callback = function(Option)
         Settings.SelectedRarities = {}
-
-        for _, value in ipairs(Options or {}) do
-            if type(value) == "string" then
-                local tier = RARITY_NAME_TO_TIER[value]
-                if tier then Settings.SelectedRarities[tier] = true end
+        if Option and Option[1] and Option[1] ~= "" then
+            local tier = RARITY_NAME_TO_TIER[Option[1]]
+            if tier then
+                Settings.SelectedRarities[tier] = true
+                Rayfield:Notify({ Title = "Vechnost", Content = "Filter: " .. Option[1], Duration = 2 })
             end
-        end
-
-        if next(Settings.SelectedRarities) == nil then
-            Rayfield:Notify({ Title = "Vechnost", Content = "Filter: Semua rarity", Duration = 2 })
         else
-            Rayfield:Notify({ Title = "Vechnost", Content = "Filter rarity diperbarui", Duration = 2 })
+            Rayfield:Notify({ Title = "Vechnost", Content = "Filter: Semua rarity", Duration = 2 })
         end
     end
 })
-
-TabWebhook:CreateToggle({
-    Name = "Log Player Join",
-    CurrentValue = false,
-    Flag = "LogPlayerJoin",
-    Callback = function(Value) Settings.LogPlayerJoin = Value end
-})
-
-TabWebhook:CreateToggle({
-    Name = "Log Player Leave",
-    CurrentValue = false,
-    Flag = "LogPlayerLeave",
-    Callback = function(Value) Settings.LogPlayerLeave = Value end
-})
-
--- -- WEBHOOK URL --
-TabWebhook:CreateSection("Setup Webhook")
 
 local WebhookUrlBuffer = ""
 
 TabWebhook:CreateInput({
-    Name = "Discord Webhook URL",
+    Name = "Webhook URL",
     CurrentValue = "",
     PlaceholderText = "https://discord.com/api/webhooks/...",
     RemoveTextAfterFocusLost = false,
     Flag = "WebhookUrl",
     Callback = function(Text)
-        WebhookUrlBuffer = tostring(Text)
-    end
-})
-
-TabWebhook:CreateButton({
-    Name = "Save Webhook URL",
-    Callback = function()
-        local url = WebhookUrlBuffer:gsub("%s+", "")
-
-        if not url:match("^https://discord.com/api/webhooks/")
-        and not url:match("^https://canary.discord.com/api/webhooks/") then
-            Rayfield:Notify({ Title = "Vechnost", Content = "URL webhook tidak valid!", Duration = 3 })
-            return
+        local url = tostring(Text):gsub("%s+", "")
+        WebhookUrlBuffer = url
+        if url:match("^https://discord.com/api/webhooks/") or
+           url:match("^https://canary.discord.com/api/webhooks/") then
+            Settings.Url = url
         end
-
-        Settings.Url = url
-        Rayfield:Notify({ Title = "Vechnost", Content = "Webhook URL saved!", Duration = 2 })
     end
 })
 
--- -- MODE --
-TabWebhook:CreateSection("Logger Mode")
-
 TabWebhook:CreateToggle({
-    Name = "Server-Notifier Mode",
-    CurrentValue = true,
-    Flag = "ServerNotifierMode",
-    Callback = function(Value)
-        Settings.ServerWide = Value
-        Rayfield:Notify({
-            Title = "Vechnost",
-            Content = Value and "Mode: Seluruh Server" or "Mode: Hanya Lokal",
-            Duration = 2
-        })
-    end
-})
-
--- -- CONTROL --
-TabWebhook:CreateSection("Control")
-
-TabWebhook:CreateToggle({
-    Name = "Enable Webhook Logger",
+    Name = "Send Fish Webhook",
     CurrentValue = false,
     Flag = "LoggerEnabled",
     Callback = function(Value)
@@ -1640,18 +1733,31 @@ TabWebhook:CreateToggle({
                 return
             end
             StartLogger()
-            Rayfield:Notify({ Title = "Vechnost", Content = "Notifier Aktif!", Duration = 2 })
+            Rayfield:Notify({ Title = "Vechnost", Content = "Webhook Aktif!", Duration = 2 })
         else
             StopLogger()
-            Rayfield:Notify({ Title = "Vechnost", Content = "Notifier Berhenti", Duration = 2 })
+            Rayfield:Notify({ Title = "Vechnost", Content = "Webhook Berhenti", Duration = 2 })
         end
     end
 })
 
--- -- STATUS --
+TabWebhook:CreateButton({
+    Name = "Test Webhook Connection",
+    Callback = function()
+        if Settings.Url == "" then
+            Rayfield:Notify({ Title = "Vechnost", Content = "Isi webhook URL dulu!", Duration = 3 })
+            return
+        end
+        task.spawn(function()
+            SendWebhook(BuildTestPayload(LocalPlayer.Name))
+        end)
+        Rayfield:Notify({ Title = "Vechnost", Content = "Test message terkirim!", Duration = 2 })
+    end
+})
+
 local StatusLabel = TabWebhook:CreateParagraph({
-    Title = "Vechnost Status",
-    Content = "Status: Offline"
+    Title = "Notifier Status",
+    Content = "Status: Offline ❌"
 })
 
 task.spawn(function()
@@ -1662,16 +1768,12 @@ task.spawn(function()
                 if Settings.Active then
                     StatusLabel:Set({
                         Title = "Notifier Status",
-                        Content = string.format(
-                            "Status: Aktif\nMode: %s\nTotal Log: %d ikan",
-                            Settings.ServerWide and "Server-Notifier" or "Local Only",
-                            Settings.LogCount
-                        )
+                        Content = string.format("Status: Online ✅\nTotal Log: %d ikan", Settings.LogCount)
                     })
                 else
                     StatusLabel:Set({
                         Title = "Notifier Status",
-                        Content = "Status: Offline"
+                        Content = "Status: Offline ❌"
                     })
                 end
             end)
@@ -1679,38 +1781,24 @@ task.spawn(function()
     end
 end)
 
--- -- SETTINGS TAB --
-TabSettings:CreateSection("Tentang")
+-- =====================================================
+-- TAB: CONFIG
+-- =====================================================
+TabConfig:CreateSection("Tentang")
 
-TabSettings:CreateParagraph({
-    Title = "Vechnost Webhook Notifier",
-    Content = "Version 2.0.0\nServer-Notifier Fish Catch Logger\nLog ikan dari semua player di server\nAutomation + Exploit Tools\n\nby Vechnost"
+TabConfig:CreateParagraph({
+    Title = "Vechnost",
+    Content = "Version 2.0.0\nFish Catch Webhook Notifier\nby Vechnost\ndiscord.gg/pFhdW9ZwwY"
 })
 
-TabSettings:CreateSection("Testing")
+TabConfig:CreateSection("Tools")
 
-TabSettings:CreateButton({
-    Name = "Test Webhook",
-    Callback = function()
-        if Settings.Url == "" then
-            Rayfield:Notify({ Title = "Vechnost", Content = "Isi webhook URL dulu!", Duration = 3 })
-            return
-        end
-
-        task.spawn(function()
-            SendWebhook(BuildTestPayload(LocalPlayer.Name))
-        end)
-
-        Rayfield:Notify({ Title = "Vechnost", Content = "Test message terkirim!", Duration = 2 })
-    end
-})
-
-TabSettings:CreateButton({
+TabConfig:CreateButton({
     Name = "Reset Log Counter",
     Callback = function()
         Settings.LogCount = 0
         Settings.SentUUID = {}
-        Rayfield:Notify({ Title = "Vechnost", Content = "Counter di-reset!", Duration = 2 })
+        Rayfield:Notify({ Title = "Vechnost", Content = "Log counter di-reset!", Duration = 2 })
     end
 })
 
@@ -1718,5 +1806,5 @@ TabSettings:CreateButton({
 -- BAGIAN 14: INIT
 -- =====================================================
 Rayfield:LoadConfiguration()
-warn("[Vechnost] Webhook Logger v1.0 Loaded!")
+warn("[Vechnost] v2.0.0 Loaded!")
 warn("[Vechnost] Toggle GUI: tekan V atau tap tombol floating")
