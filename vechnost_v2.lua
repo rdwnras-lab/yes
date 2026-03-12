@@ -15,7 +15,6 @@
 -- BAGIAN 0: ANTI-BAC UTILITY
 -- =====================================================
 local function de(str)
-    -- Decode string yang di-encode dengan ASCII codes dipisah spasi
     local res = ""
     for num in string.gmatch(str, "%d+") do
         res = res .. string.char(tonumber(num))
@@ -907,7 +906,7 @@ for _,td in ipairs(tabs) do
 end
 
 -- =====================================================
--- BAGIAN 17: UI COMPONENT CREATORS
+-- BAGIAN 17: UI COMPONENT CREATORS (DIPERBAIKI)
 -- =====================================================
 local orderCnt = {}
 local function nextOrder(tab) orderCnt[tab] = (orderCnt[tab] or 0) + 1; return orderCnt[tab] end
@@ -953,7 +952,10 @@ local function Input(tab, name, placeholder, cb)
     local box = Instance.new("TextBox", f)
     box.Size = UDim2.new(1,-20,0,26); box.Position = UDim2.new(0,10,0,26); box.BackgroundColor3 = Colors.Background; box.BorderSizePixel = 0; box.Text = ""; box.PlaceholderText = placeholder or ""; box.PlaceholderColor3 = Colors.TextMuted; box.TextColor3 = Colors.Text; box.TextSize = 11; box.Font = Enum.Font.Gotham; box.ClearTextOnFocus = false
     Instance.new("UICorner", box).CornerRadius = UDim.new(0,6)
-    Instance.new("UIPadding", box).PaddingLeft = UDim.new(0,10); box.PaddingRight = UDim.new(0,10)
+    -- Perbaikan: buat UIPadding dan atur padding
+    local padding = Instance.new("UIPadding", box)
+    padding.PaddingLeft = UDim.new(0,10)
+    padding.PaddingRight = UDim.new(0,10)
     box.FocusLost:Connect(function() if cb then cb(box.Text) end end)
     return {Frame=f, TextBox=box, Get=function() return box.Text end, Set=function(_,v) box.Text=v end}
 end
