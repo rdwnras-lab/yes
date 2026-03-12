@@ -1,12 +1,13 @@
 --[[ 
     FILE: vechnost_v2.lua
     BRAND: Vechnost
-    VERSION: 2.0.0
-    DESC: Server-Wide Fish Webhook Logger + Auto Trading System + Teleport for Roblox "Fish It"
-          Logs fish catches from ALL players in the server
-          Sends rich notifications to Discord via Webhook
-          Auto Trade: by Name, by Coin, by Rarity, by Stone
-          Teleport: to all islands in Fish It
+    VERSION: 2.5.0
+    DESC: Complete Fish It Automation Suite
+          - Auto Fishing + Clicker
+          - Island Teleport
+          - Auto Trading (Coin, Rarity, Stone, Name)
+          - Auto Shop (Charm, Weather, Bait, Merchant)
+          - Server-Wide Webhook Logger
     UI: Custom Dark Blue Sidebar Design
 ]]
 
@@ -25,22 +26,6 @@ for _, v in pairs(CoreGui:GetChildren()) do
     end
 end
 
-for _, v in pairs(CoreGui:GetDescendants()) do
-    if v:IsA("TextLabel") and v.Text == "Vechnost" then
-        local container = v
-        for i = 1, 10 do
-            if typeof(container) ~= "Instance" then break end
-            local parent = container.Parent
-            if not parent then break end
-            container = parent
-            if typeof(container) == "Instance" and container:IsA("ScreenGui") then
-                container:Destroy()
-                break
-            end
-        end
-    end
-end
-
 -- =====================================================
 -- BAGIAN 2: SERVICES & GLOBALS
 -- =====================================================
@@ -51,6 +36,8 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -66,7 +53,6 @@ do
     end)
     if not ok then
         warn("[Vechnost] ERROR loading game remotes:", err)
-        warn("[Vechnost] Make sure you are in the Fish It game!")
     else
         warn("[Vechnost] Game remotes loaded OK")
     end
@@ -84,6 +70,26 @@ local Settings = {
     LogCount = 0,
 }
 
+local FishingSettings = {
+    AutoCast = false,
+    AutoReel = false,
+    AutoShake = false,
+    PerfectCatch = false,
+    AntiAFK = false,
+    AutoSell = false,
+    ClickSpeed = 50,
+}
+
+local ShopSettings = {
+    AutoBuyCharm = false,
+    AutoBuyWeather = false,
+    AutoBuyBait = false,
+    AutoBuyMerchant = false,
+    SelectedCharm = nil,
+    SelectedWeather = nil,
+    SelectedBait = nil,
+}
+
 -- =====================================================
 -- BAGIAN 4: FISH DATABASE
 -- =====================================================
@@ -92,31 +98,20 @@ do
     local ok, err = pcall(function()
         local Items = ReplicatedStorage:WaitForChild("Items", 10)
         if not Items then return end
-        local debugOnce = true
         for _, module in ipairs(Items:GetChildren()) do
             if module:IsA("ModuleScript") then
                 local ok2, mod = pcall(require, module)
                 if ok2 and mod and mod.Data and mod.Data.Type == "Fish" then
-                    if debugOnce then
-                        debugOnce = false
-                        warn("[Vechnost] FishDB sample keys for:", mod.Data.Name)
-                        for k, v in pairs(mod.Data) do
-                            warn("  ", k, "=", tostring(v))
-                        end
-                    end
                     FishDB[mod.Data.Id] = {
                         Name = mod.Data.Name,
                         Tier = mod.Data.Tier,
                         Icon = mod.Data.Icon,
-                        SellPrice = mod.Data.SellPrice or mod.Data.Value or mod.Data.Price or mod.Data.Worth or 0
+                        SellPrice = mod.Data.SellPrice or mod.Data.Value or 0
                     }
                 end
             end
         end
     end)
-    if not ok then
-        warn("[Vechnost] ERROR loading FishDB:", err)
-    end
 end
 
 local FishNameToId = {}
@@ -126,19 +121,15 @@ for fishId, fishData in pairs(FishDB) do
         FishNameToId[string.lower(fishData.Name)] = fishId
     end
 end
-warn("[Vechnost] FishDB Loaded:", #FishNameToId > 0 and "OK" or "EMPTY")
 
 -- =====================================================
--- BAGIAN 4B: REPLION PLAYER DATA
+-- BAGIAN 5: REPLION PLAYER DATA
 -- =====================================================
 local PlayerData = nil
 do
     pcall(function()
         local Replion = require(ReplicatedStorage.Packages.Replion)
         PlayerData = Replion.Client:WaitReplion("Data")
-        if PlayerData then
-            warn("[Vechnost] Player Replion Data loaded OK")
-        end
     end)
 end
 
@@ -153,166 +144,44 @@ local function FormatNumber(n)
     return formatted
 end
 
-local _debugStatsDone = false
 local function GetPlayerStats()
-    local stats = {
-        Coins = 0,
-        TotalCaught = 0,
-        BackpackCount = 0,
-        BackpackMax = 0,
-    }
-
+    local stats = { Coins = 0, TotalCaught = 0, BackpackCount = 0, BackpackMax = 0 }
     if not PlayerData then return stats end
-
+    
     pcall(function()
-        if not _debugStatsDone then
-            _debugStatsDone = true
-            warn("[Vechnost] Replion Data top-level keys:")
-            local allData = nil
-            pcall(function()
-                if PlayerData.GetData then
-                    allData = PlayerData:GetData()
-                end
-            end)
-            if allData then
-                for k, v in pairs(allData) do
-                    local vType = typeof(v)
-                    if vType == "table" then
-                        warn("  ", k, "= [table]")
-                        for k2, v2 in pairs(v) do
-                            warn("    ", k2, "=", tostring(v2):sub(1, 80))
-                        end
-                    else
-                        warn("  ", k, "=", tostring(v))
-                    end
-                end
-            else
-                for _, key in ipairs({"Coins", "Currency", "Money", "Gold", "Cash", "Inventory", "Backpack", "Stats", "FishCaught", "TotalCaught", "BackpackSize"}) do
-                    local ok, val = pcall(function() return PlayerData:Get(key) end)
-                    if ok and val ~= nil then
-                        warn("  ", key, "=", tostring(val):sub(1, 80))
-                    end
-                end
-            end
-        end
-
-        local coinVal = nil
-        for _, key in ipairs({"Coins", "Currency", "Money", "Gold", "Cash"}) do
+        for _, key in ipairs({"Coins", "Currency", "Money"}) do
             local ok, val = pcall(function() return PlayerData:Get(key) end)
             if ok and val and type(val) == "number" then
-                coinVal = val
+                stats.Coins = val
                 break
             end
         end
-        stats.Coins = coinVal or 0
-
-        for _, key in ipairs({"TotalCaught", "FishCaught", "TotalFish"}) do
+        
+        for _, key in ipairs({"TotalCaught", "FishCaught"}) do
             local ok, val = pcall(function() return PlayerData:Get(key) end)
             if ok and val and type(val) == "number" then
                 stats.TotalCaught = val
                 break
             end
         end
-
-        if stats.TotalCaught == 0 then
-            pcall(function()
-                local s = PlayerData:Get("Stats")
-                if s and typeof(s) == "table" then
-                    stats.TotalCaught = s.TotalCaught or s.FishCaught or s.TotalFish or 0
-                end
-            end)
-        end
-
-        pcall(function()
-            local inv = PlayerData:Get("Inventory")
-            if inv and typeof(inv) == "table" then
-                if not _debugStatsDone then
-                    warn("[Vechnost] Inventory table keys:")
-                    for k, v in pairs(inv) do
-                        local t = typeof(v)
-                        if t == "table" then
-                            local c = 0
-                            for _ in pairs(v) do c = c + 1 end
-                            warn("  Inv." .. tostring(k) .. " = [table:" .. c .. "]")
-                        else
-                            warn("  Inv." .. tostring(k) .. " = " .. tostring(v))
-                        end
-                    end
-                end
-                if inv.Items and typeof(inv.Items) == "table" then
-                    local count = 0
-                    for _ in pairs(inv.Items) do count = count + 1 end
-                    stats.BackpackCount = count
-                else
-                    local count = 0
-                    for _ in pairs(inv) do count = count + 1 end
-                    stats.BackpackCount = count
-                end
-                if inv.Capacity and type(inv.Capacity) == "number" then
-                    stats.BackpackMax = inv.Capacity
-                elseif inv.Size and type(inv.Size) == "number" then
-                    stats.BackpackMax = inv.Size
-                elseif inv.MaxSize and type(inv.MaxSize) == "number" then
-                    stats.BackpackMax = inv.MaxSize
-                elseif inv.Max and type(inv.Max) == "number" then
-                    stats.BackpackMax = inv.Max
-                elseif inv.Limit and type(inv.Limit) == "number" then
-                    stats.BackpackMax = inv.Limit
-                end
+        
+        local inv = PlayerData:Get("Inventory")
+        if inv and typeof(inv) == "table" then
+            local items = inv.Items or inv
+            if typeof(items) == "table" then
+                local count = 0
+                for _ in pairs(items) do count = count + 1 end
+                stats.BackpackCount = count
             end
-        end)
-
-        if stats.BackpackMax == 0 then
-            for _, key in ipairs({"BackpackSize", "MaxBackpack", "BackpackMax", "InventorySize", "MaxInventory", "InventoryCapacity"}) do
-                local ok, val = pcall(function() return PlayerData:Get(key) end)
-                if ok and val and type(val) == "number" and val > 0 then
-                    stats.BackpackMax = val
-                    break
-                end
-            end
-        end
-
-        if stats.BackpackMax == 0 then
-            pcall(function()
-                local u = PlayerData:Get("Upgrades")
-                if u and typeof(u) == "table" then
-                    stats.BackpackMax = u.BackpackSize or u.Backpack or u.InventorySize or u.Capacity or 0
-                end
-            end)
-        end
-
-        if stats.BackpackMax == 0 then
-            pcall(function()
-                local function scanGui(parent)
-                    for _, child in ipairs(parent:GetDescendants()) do
-                        if (child:IsA("TextLabel") or child:IsA("TextButton")) and child.Text then
-                            local cur, mx = string.match(child.Text, "(%d+)%s*/%s*(%d+)")
-                            if cur and mx then
-                                local maxNum = tonumber(mx)
-                                if maxNum and maxNum >= 100 then
-                                    stats.BackpackMax = maxNum
-                                    return true
-                                end
-                            end
-                        end
-                    end
-                    return false
-                end
-                local pg = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
-                if pg then scanGui(pg) end
-            end)
-        end
-
-        if stats.TotalCaught == 0 and stats.BackpackCount > 0 then
-            stats.TotalCaught = stats.BackpackCount
+            stats.BackpackMax = inv.Capacity or inv.Size or inv.Max or 100
         end
     end)
-
+    
     return stats
 end
 
 -- =====================================================
--- BAGIAN 5: RARITY SYSTEM
+-- BAGIAN 6: RARITY SYSTEM
 -- =====================================================
 local RARITY_MAP = {
     [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic",
@@ -324,669 +193,48 @@ local RARITY_NAME_TO_TIER = {
     Legendary = 5, Mythic = 6, Secret = 7,
 }
 
-local RARITY_COLOR = {
-    [1] = 0x9e9e9e, [2] = 0x4caf50, [3] = 0x2196f3, [4] = 0x9c27b0,
-    [5] = 0xff9800, [6] = 0xf44336, [7] = 0xff1744,
-    [8] = 0x00e5ff, [9] = 0x448aff,
-}
-
-local RARITY_EMOJI = {
-    [1] = "⬜", [2] = "🟩", [3] = "🟦", [4] = "🟪",
-    [5] = "🟧", [6] = "🟥", [7] = "⬛", [8] = "🔷", [9] = "💠",
-}
-
-local RarityList = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
+local RarityList = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret"}
 
 -- =====================================================
--- BAGIAN 6: HTTP REQUEST
+-- BAGIAN 7: TELEPORT LOCATIONS - FISH IT ISLANDS
 -- =====================================================
-local HttpRequest =
-    syn and syn.request
-    or http_request
-    or request
-    or (fluxus and fluxus.request)
-    or (krnl and krnl.request)
-
-if not HttpRequest then
-    warn("[Vechnost][FATAL] HttpRequest not available in this executor")
-end
-
--- =====================================================
--- BAGIAN 7: ICON CACHE
--- =====================================================
-local IconCache = {}
-local IconWaiter = {}
-
-local function FetchFishIconAsync(fishId, callback)
-    if IconCache[fishId] then
-        callback(IconCache[fishId])
-        return
-    end
-
-    if IconWaiter[fishId] then
-        table.insert(IconWaiter[fishId], callback)
-        return
-    end
-
-    IconWaiter[fishId] = { callback }
-
-    task.spawn(function()
-        local fish = FishDB[fishId]
-        if not fish or not fish.Icon then
-            callback("")
-            return
-        end
-
-        local assetId = tostring(fish.Icon):match("%d+")
-        if not assetId then
-            callback("")
-            return
-        end
-
-        local api = ("https://thumbnails.roblox.com/v1/assets?assetIds=%s&size=420x420&format=Png&isCircular=false"):format(assetId)
-
-        local ok, res = pcall(function()
-            return HttpRequest({ Url = api, Method = "GET" })
-        end)
-
-        if not ok or not res or not res.Body then
-            callback("")
-            return
-        end
-
-        local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
-        if not ok2 then
-            callback("")
-            return
-        end
-
-        local imageUrl = data and data.data and data.data[1] and data.data[1].imageUrl
-        IconCache[fishId] = imageUrl or ""
-
-        for _, cb in ipairs(IconWaiter[fishId]) do
-            cb(IconCache[fishId])
-        end
-        IconWaiter[fishId] = nil
-    end)
-end
-
--- =====================================================
--- BAGIAN 8: FILTER & HELPERS
--- =====================================================
-local function IsRarityAllowed(fishId)
-    local fish = FishDB[fishId]
-    if not fish then return false end
-    local tier = fish.Tier
-    if type(tier) ~= "number" then return false end
-    if next(Settings.SelectedRarities) == nil then return true end
-    return Settings.SelectedRarities[tier] == true
-end
-
-local function ExtractMutation(weightData, item)
-    local mutation = nil
-
-    if weightData and typeof(weightData) == "table" then
-        mutation = weightData.Mutation or weightData.Variant or weightData.VariantID
-        if not mutation then
-            for k, v in pairs(weightData) do
-                local lk = string.lower(tostring(k))
-                if lk == "variant" or lk == "variantid" or lk == "mutation" then
-                    mutation = v
-                    break
-                end
-            end
-        end
-    end
-
-    if not mutation and item then
-        mutation = item.Mutation or item.Variant or item.VariantID
-        if not mutation and item.Properties then
-            mutation = item.Properties.Mutation or item.Properties.Variant or item.Properties.VariantID
-        end
-    end
-
-    return mutation
-end
-
-local function ResolvePlayerName(arg)
-    if typeof(arg) == "Instance" and arg:IsA("Player") then
-        return arg.Name
-    elseif typeof(arg) == "string" then
-        return arg
-    elseif typeof(arg) == "table" and arg.Name then
-        return tostring(arg.Name)
-    end
-    return LocalPlayer.Name
-end
-
--- =====================================================
--- BAGIAN 9: WEBHOOK ENGINE
--- =====================================================
-local function BuildPayload(playerName, fishId, weight, mutation)
-    local fish = FishDB[fishId]
-    if not fish then return nil end
-
-    local tier = fish.Tier
-    local rarityName = RARITY_MAP[tier] or "Unknown"
-    local mutText = (mutation ~= nil) and tostring(mutation) or "None"
-    local weightText = string.format("%.1fkg", weight or 0)
-    local iconUrl = IconCache[fishId] or ""
-    
-    local _e = string.char
-    local RARITY_EMOJI = {
-        [1] = _e(226,172,156), [2] = _e(240,159,159,169), [3] = _e(240,159,159,166),
-        [4] = _e(240,159,159,170), [5] = _e(240,159,159,167), [6] = _e(240,159,159,165),
-        [7] = _e(240,159,159,165), [8] = _e(240,159,159,169), [9] = _e(240,159,159,166),
-    }
-    local rarityEmoji = RARITY_EMOJI[tier] or ""
-    local dateStr = os.date("!%B %d, %Y")
-
-    local payload = {
-        username = "Vechnost Notifier",
-        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags = 32768,
-        components = {
-            {
-                type = 17,
-                components = {
-                    { type = 10, content = "# NEW FISH CAUGHT!" },
-                    { type = 14, spacing = 1, divider = true },
-                    { 
-                        type = 10, 
-                        content = "__@" .. (playerName or "Unknown") .. " you got new " .. string.upper(rarityName) .. " fish__" 
-                    },
-                    {
-                        type = 9,
-                        components = {
-                            { type = 10, content = "**Fish Name**" },
-                            { type = 10, content = "> " .. (fish.Name or "Unknown") }
-                        },
-                        accessory = iconUrl ~= "" and {
-                            type = 11,
-                            media = { url = iconUrl }
-                        } or nil
-                    },
-                    { type = 10, content = "**Fish Tier**" },
-                    { type = 10, content = "> " .. string.upper(rarityName) },
-                    { type = 10, content = "**Weight**" },
-                    { type = 10, content = "> " .. weightText },
-                    { type = 10, content = "**Mutation**" },
-                    { type = 10, content = "> " .. mutText },
-                    { type = 14, spacing = 1, divider = true },
-                    { type = 10, content = "> Notification by discord.gg/vechnost" },
-                    { type = 10, content = "-# " .. dateStr }
-                }
-            }
-        }
-    }
-
-    return payload
-end
-
-local function BuildActivationPayload(playerName, mode)
-    local dateStr = os.date("!%B %d, %Y")
-    return {
-        username = "Vechnost Notifier",
-        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags = 32768,
-        components = {
-            {
-                type = 17,
-                accent_color = 0x30ff6a,
-                components = {
-                    {
-                        type = 10,
-                        content = "**" .. playerName .. "  Webhook Activated !**"
-                    },
-                    { type = 14, spacing = 1, divider = true },
-                    {
-                        type = 10,
-                        content = "### Vechnost Webhook Notifier"
-                    },
-                    {
-                        type = 10,
-                        content = "- **Account Name:** " .. playerName .. "\n- **Mode:** " .. mode .. "\n- **Status:** Online"
-                    },
-                    { type = 14, spacing = 1, divider = true },
-                    {
-                        type = 10,
-                        content = "-# " .. dateStr
-                    }
-                }
-            }
-        }
-    }
-end
-
-local function BuildTestPayload(playerName)
-    local dateStr = os.date("!%B %d, %Y")
-    return {
-        username = "Vechnost Notifier",
-        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags = 32768,
-        components = {
-            {
-                type = 17,
-                accent_color = 0x5865f2,
-                components = {
-                    {
-                        type = 10,
-                        content = "**Test Message**"
-                    },
-                    { type = 14, spacing = 1, divider = true },
-                    {
-                        type = 10,
-                        content = "Webhook berfungsi dengan baik!\n\n- **Dikirim oleh:** " .. playerName
-                    },
-                    { type = 14, spacing = 1, divider = true },
-                    {
-                        type = 10,
-                        content = "-# " .. dateStr
-                    }
-                }
-            }
-        }
-    }
-end
-
-local function SendWebhook(payload)
-    if Settings.Url == "" then return end
-    if not HttpRequest then return end
-    if not payload then return end
-
-    pcall(function()
-        local url = Settings.Url
-        if string.find(url, "?") then
-            url = url .. "&with_components=true"
-        else
-            url = url .. "?with_components=true"
-        end
-
-        HttpRequest({
-            Url = url,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(payload)
-        })
-    end)
-end
-
--- =====================================================
--- BAGIAN 10: SERVER-WIDE FISH DETECTION
--- =====================================================
-local Connections = {}
-local ChatSentDedup = {}
-
-local function ParseChatForFish(messageText)
-    if not Settings.Active then return end
-    if not Settings.ServerWide then return end
-    if not messageText or messageText == "" then return end
-
-    local playerName, fishName, weightStr = string.match(messageText, "(%S+)%s+obtained%s+a%s+(.-)%s*%(([%d%.]+)kg%)")
-
-    if not playerName then
-        playerName, fishName, weightStr = string.match(messageText, "(%S+)%s+obtained%s+(.-)%s*%(([%d%.]+)kg%)")
-    end
-
-    if not playerName then
-        playerName, fishName = string.match(messageText, "(%S+)%s+obtained%s+a%s+(.-)%s*with")
-    end
-
-    if not playerName then
-        playerName, fishName = string.match(messageText, "(%S+)%s+obtained%s+(.-)%s*with")
-    end
-
-    if not playerName or not fishName then return end
-
-    fishName = string.gsub(fishName, "%s+$", "")
-
-    if playerName == LocalPlayer.Name or playerName == LocalPlayer.DisplayName then
-        return
-    end
-
-    local fishId = FishNameToId[fishName] or FishNameToId[string.lower(fishName)]
-    if not fishId then
-        for name, id in pairs(FishNameToId) do
-            if string.find(string.lower(fishName), string.lower(name)) or string.find(string.lower(name), string.lower(fishName)) then
-                fishId = id
-                break
-            end
-        end
-    end
-
-    if not fishId then
-        warn("[Vechnost] Chat fish not in DB:", fishName)
-        return
-    end
-
-    if not IsRarityAllowed(fishId) then return end
-
-    local dedupKey = playerName .. fishName .. tostring(math.floor(os.time() / 2))
-    if ChatSentDedup[dedupKey] then return end
-    ChatSentDedup[dedupKey] = true
-
-    task.defer(function()
-        task.wait(10)
-        ChatSentDedup[dedupKey] = nil
-    end)
-
-    local weight = tonumber(weightStr) or 0
-
-    Settings.LogCount = Settings.LogCount + 1
-    warn("[Vechnost] Notifier via CHAT:", playerName, "caught", FishDB[fishId].Name, "(", weight, "kg)")
-
-    FetchFishIconAsync(fishId, function()
-        SendWebhook(BuildPayload(playerName, fishId, weight, nil))
-    end)
-end
-
-local function HandleFishCaught(playerArg, weightData, wrapper)
-    if not Settings.Active then return end
-
-    local item = nil
-    if wrapper and typeof(wrapper) == "table" and wrapper.InventoryItem then
-        item = wrapper.InventoryItem
-    end
-
-    if not item and weightData and typeof(weightData) == "table" and weightData.InventoryItem then
-        item = weightData.InventoryItem
-    end
-
-    if not item then
-        warn("[Vechnost] No InventoryItem found in event data")
-        return
-    end
-
-    if not item.Id or not item.UUID then
-        warn("[Vechnost] Item missing Id or UUID")
-        return
-    end
-
-    if not FishDB[item.Id] then return end
-
-    if not IsRarityAllowed(item.Id) then return end
-
-    if Settings.SentUUID[item.UUID] then return end
-    Settings.SentUUID[item.UUID] = true
-
-    local playerName = ResolvePlayerName(playerArg)
-
-    if not Settings.ServerWide and playerName ~= LocalPlayer.Name then return end
-
-    local weight = 0
-    if weightData and typeof(weightData) == "table" and weightData.Weight then
-        weight = weightData.Weight
-    end
-
-    local mutation = ExtractMutation(weightData, item)
-
-    Settings.LogCount = Settings.LogCount + 1
-    warn("[Vechnost] Fish caught! Player:", playerName, "Fish:", FishDB[item.Id].Name, "Count:", Settings.LogCount)
-
-    FetchFishIconAsync(item.Id, function()
-        SendWebhook(BuildPayload(playerName, item.Id, weight, mutation))
-    end)
-end
-
-local function TryProcessGeneric(remoteName, ...)
-    if not Settings.Active then return end
-
-    local args = {...}
-    for i = 1, #args do
-        local arg = args[i]
-        if typeof(arg) == "table" then
-            local item = nil
-            if arg.InventoryItem then
-                item = arg.InventoryItem
-            elseif arg.Id and arg.UUID then
-                item = arg
-            end
-
-            if item and item.Id and item.UUID and FishDB[item.Id] then
-                local playerArg = (i > 1) and args[1] or nil
-                local weightArg = nil
-                for j = 1, #args do
-                    if typeof(args[j]) == "table" and args[j].Weight then
-                        weightArg = args[j]
-                        break
-                    end
-                end
-                HandleFishCaught(playerArg, weightArg, arg)
-                return
-            end
-        end
-    end
-end
-
-local function StartLogger()
-    if Settings.Active then return end
-
-    if not net or not ObtainedNewFish then
-        return false, "ERROR: Game remotes not found!"
-    end
-
-    Settings.Active = true
-    Settings.SentUUID = {}
-    Settings.LogCount = 0
-
-    if Settings.ServerWide then
-        pcall(function()
-            local TextChatService = game:GetService("TextChatService")
-            Connections[#Connections + 1] = TextChatService.MessageReceived:Connect(function(textChatMessage)
-                pcall(function()
-                    local text = textChatMessage.Text or ""
-                    if string.find(text, "obtained") then
-                        ParseChatForFish(text)
-                    end
-                end)
-            end)
-            warn("[Vechnost] Chat monitor (TextChatService) active")
-        end)
-
-        pcall(function()
-            local chatFrame = PlayerGui:WaitForChild("Chat", 3)
-            if chatFrame then
-                chatFrame.DescendantAdded:Connect(function(desc)
-                    if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-                        task.defer(function()
-                            local text = desc.Text or ""
-                            if string.find(text, "obtained") then
-                                ParseChatForFish(text)
-                            end
-                        end)
-                    end
-                end)
-                warn("[Vechnost] Chat monitor (StarterGui) active")
-            end
-        end)
-    end
-
-    local ok1, err1 = pcall(function()
-        Connections[#Connections + 1] = ObtainedNewFish.OnClientEvent:Connect(function(playerArg, weightData, wrapper)
-            HandleFishCaught(playerArg, weightData, wrapper)
-        end)
-    end)
-    if ok1 then
-        warn("[Vechnost] Primary hook connected OK")
-    else
-        warn("[Vechnost] Primary hook error:", err1)
-    end
-
-    if Settings.ServerWide then
-        pcall(function()
-            local function ScanNotificationText(textObj)
-                if not textObj or not textObj:IsA("TextLabel") then return end
-                local text = textObj.Text or ""
-                if text == "" then return end
-
-                for fishId, fishData in pairs(FishDB) do
-                    if fishData.Name and string.find(text, fishData.Name) then
-                        local playerName = "Unknown"
-
-                        for _, player in pairs(Players:GetPlayers()) do
-                            if player ~= LocalPlayer and string.find(text, player.Name) then
-                                playerName = player.Name
-                                break
-                            elseif player ~= LocalPlayer and string.find(text, player.DisplayName) then
-                                playerName = player.DisplayName
-                                break
-                            end
-                        end
-
-                        if playerName == LocalPlayer.Name or playerName == LocalPlayer.DisplayName then
-                            return
-                        end
-                        if string.find(text, LocalPlayer.Name) or string.find(text, LocalPlayer.DisplayName) then
-                            return
-                        end
-
-                        if playerName == "Unknown" then return end
-
-                        local dedupKey = "GUI_" .. text .. "_" .. os.time()
-                        if Settings.SentUUID[dedupKey] then return end
-                        Settings.SentUUID[dedupKey] = true
-
-                        if not IsRarityAllowed(fishId) then return end
-
-                        Settings.LogCount = Settings.LogCount + 1
-                        warn("[Vechnost] Notifier catch detected via GUI!", playerName, fishData.Name)
-
-                        FetchFishIconAsync(fishId, function()
-                            SendWebhook(BuildPayload(playerName, fishId, 0, nil))
-                        end)
-                        return
-                    end
-                end
-            end
-
-            Connections[#Connections + 1] = PlayerGui.DescendantAdded:Connect(function(desc)
-                if not Settings.Active then return end
-                if desc:IsA("TextLabel") then
-                    task.defer(function()
-                        ScanNotificationText(desc)
-                    end)
-                end
-            end)
-            warn("[Vechnost] GUI notification scanner active")
-        end)
-
-        pcall(function()
-            local Replion = require(ReplicatedStorage.Packages.Replion)
-
-            local stateNames = {"ServerFeed", "GlobalNotifications", "RecentCatches", "FishLog", "ServerNotifications", "Feed"}
-            for _, stateName in ipairs(stateNames) do
-                task.spawn(function()
-                    local found = false
-                    task.delay(3, function()
-                        if not found then return end
-                    end)
-                    local ok, state = pcall(function()
-                        return Replion.Client:WaitReplion(stateName)
-                    end)
-                    if ok and state then
-                        found = true
-                        warn("[Vechnost] Found Replion state:", stateName)
-                        pcall(function()
-                            state:OnChange(function(key, value)
-                                if not Settings.Active then return end
-                                if typeof(value) == "table" then
-                                    if value.InventoryItem or (value.Id and value.UUID) then
-                                        HandleFishCaught(value.Player or value.PlayerName, value, {InventoryItem = value.InventoryItem or value})
-                                    end
-                                end
-                            end)
-                        end)
-                    end
-                end)
-            end
-        end)
-
-        local hookCount = 0
-        pcall(function()
-            for _, child in pairs(net:GetChildren()) do
-                if child:IsA("RemoteEvent") and child ~= ObtainedNewFish then
-                    Connections[#Connections + 1] = child.OnClientEvent:Connect(function(...)
-                        TryProcessGeneric(child.Name, ...)
-                    end)
-                    hookCount = hookCount + 1
-                end
-            end
-        end)
-        warn("[Vechnost] Remote hooks:", hookCount, "events connected")
-    end
-
-    task.spawn(function()
-        local mode = Settings.ServerWide and "Server Notifier" or "Local Only"
-        SendWebhook(BuildActivationPayload(LocalPlayer.Name, mode))
-    end)
-
-    warn("[Vechnost] Webhook Logger ENABLED | Mode:", Settings.ServerWide and "Server-Notifier" or "Local")
-    return true, "Webhook Logger aktif!"
-end
-
-local function StopLogger()
-    Settings.Active = false
-
-    for _, conn in ipairs(Connections) do
-        pcall(function() conn:Disconnect() end)
-    end
-    Connections = {}
-
-    warn("[Vechnost] Webhook Logger DISABLED | Total logged:", Settings.LogCount)
-end
-
--- =====================================================
--- BAGIAN 11: TELEPORT SYSTEM - FISH IT ISLANDS
--- =====================================================
-
 local TeleportLocations = {}
+
+local FishItIslands = {
+    {Name = "Moosewood", Keywords = {"moosewood", "starter", "spawn", "hub"}},
+    {Name = "Roslit Bay", Keywords = {"roslit", "bay"}},
+    {Name = "Mushgrove Swamp", Keywords = {"mushgrove", "swamp", "mushroom"}},
+    {Name = "Snowcap Island", Keywords = {"snowcap", "snow", "ice", "frozen"}},
+    {Name = "Terrapin Island", Keywords = {"terrapin", "turtle"}},
+    {Name = "Forsaken Shores", Keywords = {"forsaken", "shores"}},
+    {Name = "Sunstone Island", Keywords = {"sunstone", "sun"}},
+    {Name = "Kepler Island", Keywords = {"kepler"}},
+    {Name = "Ancient Isle", Keywords = {"ancient", "isle"}},
+    {Name = "Volcanic Island", Keywords = {"volcanic", "volcano", "lava", "magma"}},
+    {Name = "Crystal Caverns", Keywords = {"crystal", "caverns", "cave"}},
+    {Name = "Brine Pool", Keywords = {"brine", "pool"}},
+    {Name = "Vertigo", Keywords = {"vertigo"}},
+    {Name = "Atlantis", Keywords = {"atlantis", "underwater"}},
+    {Name = "The Depths", Keywords = {"depths", "deep", "abyss"}},
+    {Name = "Monster's Borough", Keywords = {"monster", "borough"}},
+    {Name = "Event Island", Keywords = {"event", "special"}},
+}
 
 local function ScanIslands()
     TeleportLocations = {}
     
-    local knownIslandNames = {
-        "Moosewood", "Roslit Bay", "Roslit", "Mushgrove Swamp", "Mushgrove",
-        "Snowcap", "Snowcap Island", "Terrapin", "Terrapin Island",
-        "Forsaken Shores", "Forsaken", "Sunstone", "Sunstone Island",
-        "Kepler", "Kepler Island", "Ancient Isle", "Ancient",
-        "Volcanic", "Volcanic Island", "Lava", "Magma",
-        "Crystal", "Crystal Caverns", "Caverns",
-        "Deep Ocean", "Deep Sea", "Depths", "Abyss",
-        "Coral", "Coral Reef", "Reef",
-        "Spawn", "Hub", "Main", "Start", "Starter",
-        "Ocean", "Sea", "Beach", "Shore",
-        "Monster", "Monster Island", "Boss",
-        "Event", "Event Island", "Special",
-        "Secret", "Hidden", "Mystery",
-        "Treasure", "Treasure Island", "Gold",
-        "Ice", "Ice Island", "Arctic", "Frozen",
-        "Desert", "Desert Island", "Sand",
-        "Jungle", "Jungle Island", "Tropical",
-        "Enchanted", "Magic", "Mystic",
-        "Dark", "Shadow", "Night",
-        "Sky", "Cloud", "Floating",
-        "Underground", "Cave", "Cavern",
-        "Dock", "Pier", "Harbor", "Port",
-        "Shop", "Store", "Market", "Merchant",
-        "Appraiser", "Appraisal",
-        "Aquarium", "Collection", "Museum",
-        "Quest", "Mission", "NPC"
-    }
-    
     pcall(function()
-        local zones = Workspace:FindFirstChild("Zones") or Workspace:FindFirstChild("Islands") or Workspace:FindFirstChild("Locations") or Workspace:FindFirstChild("Areas")
+        local zones = Workspace:FindFirstChild("Zones") or Workspace:FindFirstChild("Islands") or Workspace:FindFirstChild("Locations")
         if zones then
             for _, zone in pairs(zones:GetChildren()) do
-                if zone:IsA("Model") or zone:IsA("Folder") or zone:IsA("Part") or zone:IsA("BasePart") then
+                if zone:IsA("Model") or zone:IsA("Folder") or zone:IsA("Part") then
                     local pos = nil
                     if zone:IsA("BasePart") then
                         pos = zone.Position
-                    elseif zone:IsA("Model") then
-                        if zone.PrimaryPart then
-                            pos = zone.PrimaryPart.Position
-                        elseif zone:FindFirstChildWhichIsA("BasePart") then
-                            pos = zone:FindFirstChildWhichIsA("BasePart").Position
-                        end
+                    elseif zone:IsA("Model") and zone.PrimaryPart then
+                        pos = zone.PrimaryPart.Position
+                    elseif zone:FindFirstChildWhichIsA("BasePart") then
+                        pos = zone:FindFirstChildWhichIsA("BasePart").Position
                     end
                     
                     if pos then
@@ -999,99 +247,34 @@ local function ScanIslands()
                 end
             end
         end
-    end)
-    
-    pcall(function()
-        local teleporters = {}
+        
         for _, obj in pairs(Workspace:GetDescendants()) do
             if obj:IsA("BasePart") then
                 local name = string.lower(obj.Name)
-                if string.find(name, "teleport") or string.find(name, "portal") or string.find(name, "warp") or string.find(name, "travel") then
-                    local displayName = obj.Name
-                    if obj.Parent and obj.Parent.Name ~= "Workspace" then
-                        displayName = obj.Parent.Name .. " - " .. obj.Name
-                    end
-                    table.insert(teleporters, {
-                        Name = displayName,
-                        Position = obj.Position,
-                        CFrame = obj.CFrame + Vector3.new(0, 3, 0)
-                    })
-                end
-            end
-        end
-        for _, tp in pairs(teleporters) do
-            table.insert(TeleportLocations, tp)
-        end
-    end)
-    
-    pcall(function()
-        for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj:IsA("Model") or obj:IsA("Folder") then
-                local objName = obj.Name
-                for _, islandName in pairs(knownIslandNames) do
-                    if string.lower(objName) == string.lower(islandName) or string.find(string.lower(objName), string.lower(islandName)) then
-                        local pos = nil
-                        if obj:IsA("Model") then
-                            if obj.PrimaryPart then
-                                pos = obj.PrimaryPart.Position
-                            elseif obj:FindFirstChildWhichIsA("BasePart") then
-                                pos = obj:FindFirstChildWhichIsA("BasePart").Position
-                            end
-                        end
-                        
-                        if pos then
+                for _, island in pairs(FishItIslands) do
+                    for _, keyword in pairs(island.Keywords) do
+                        if string.find(name, keyword) then
                             local exists = false
                             for _, loc in pairs(TeleportLocations) do
-                                if loc.Name == objName then
+                                if loc.Name == island.Name then
                                     exists = true
                                     break
                                 end
                             end
-                            
                             if not exists then
                                 table.insert(TeleportLocations, {
-                                    Name = objName,
-                                    Position = pos,
-                                    CFrame = CFrame.new(pos + Vector3.new(0, 10, 0))
+                                    Name = island.Name,
+                                    Position = obj.Position,
+                                    CFrame = CFrame.new(obj.Position + Vector3.new(0, 5, 0))
                                 })
                             end
-                        end
-                        break
-                    end
-                end
-            end
-        end
-    end)
-    
-    pcall(function()
-        for _, obj in pairs(Workspace:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") then
-                local promptName = obj.ObjectText ~= "" and obj.ObjectText or obj.ActionText
-                if promptName and promptName ~= "" then
-                    local parent = obj.Parent
-                    if parent and parent:IsA("BasePart") then
-                        local exists = false
-                        for _, loc in pairs(TeleportLocations) do
-                            if loc.Name == promptName then
-                                exists = true
-                                break
-                            end
-                        end
-                        
-                        if not exists then
-                            table.insert(TeleportLocations, {
-                                Name = "Prompt: " .. promptName,
-                                Position = parent.Position,
-                                CFrame = parent.CFrame + Vector3.new(0, 3, 0)
-                            })
+                            break
                         end
                     end
                 end
             end
         end
-    end)
-    
-    pcall(function()
+        
         local spawnLocation = Workspace:FindFirstChildOfClass("SpawnLocation")
         if spawnLocation then
             local exists = false
@@ -1112,18 +295,16 @@ local function ScanIslands()
     end)
     
     if #TeleportLocations == 0 then
-        table.insert(TeleportLocations, {
-            Name = "Spawn (Default)",
-            Position = Vector3.new(0, 50, 0),
-            CFrame = CFrame.new(0, 50, 0)
-        })
+        for _, island in pairs(FishItIslands) do
+            table.insert(TeleportLocations, {
+                Name = island.Name,
+                Position = Vector3.new(0, 50, 0),
+                CFrame = CFrame.new(0, 50, 0)
+            })
+        end
     end
     
-    table.sort(TeleportLocations, function(a, b)
-        return a.Name < b.Name
-    end)
-    
-    warn("[Vechnost] Found", #TeleportLocations, "teleport locations")
+    table.sort(TeleportLocations, function(a, b) return a.Name < b.Name end)
     return TeleportLocations
 end
 
@@ -1131,13 +312,12 @@ local function TeleportTo(locationName)
     local character = LocalPlayer.Character
     if not character then return false, "No character" end
     
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return false, "No HumanoidRootPart" end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false, "No HumanoidRootPart" end
     
     for _, loc in pairs(TeleportLocations) do
         if loc.Name == locationName then
-            humanoidRootPart.CFrame = loc.CFrame
-            warn("[Vechnost] Teleported to:", locationName)
+            hrp.CFrame = loc.CFrame
             return true, "Teleported to " .. locationName
         end
     end
@@ -1150,46 +330,390 @@ local function GetTeleportLocationNames()
     for _, loc in pairs(TeleportLocations) do
         table.insert(names, loc.Name)
     end
-    if #names == 0 then
-        names = {"(No locations found)"}
-    end
+    if #names == 0 then names = {"(Scan locations first)"} end
     return names
 end
 
 ScanIslands()
 
 -- =====================================================
--- BAGIAN 12: TRADING SYSTEM
+-- BAGIAN 8: SHOP DATABASE - FISH IT
+-- =====================================================
+local ShopDB = {
+    Charms = {
+        "Lucky Charm", "Mythical Charm", "Shiny Charm", "Magnetic Charm",
+        "Celestial Charm", "Fortune Charm", "Ocean Charm", "Treasure Charm"
+    },
+    Weather = {
+        "Sunny", "Rainy", "Stormy", "Foggy", "Snowy", 
+        "Blood Moon", "Aurora", "Eclipse"
+    },
+    Bait = {
+        "Basic Bait", "Worm", "Minnow", "Shrimp",
+        "Premium Bait", "Legendary Bait", "Mythic Bait"
+    },
+    Merchant = {
+        "Mystery Box", "Premium Crate", "Rod Upgrade",
+        "Backpack Upgrade", "Enchant Stone", "Evolved Stone"
+    }
+}
+
+local function GetShopRemote(shopType)
+    local remoteNames = {
+        Charm = {"RE/BuyCharm", "RE/PurchaseCharm", "RE/EquipCharm"},
+        Weather = {"RE/BuyWeather", "RE/ChangeWeather", "RE/SetWeather"},
+        Bait = {"RE/BuyBait", "RE/PurchaseBait", "RE/SelectBait"},
+        Merchant = {"RE/BuyItem", "RE/Purchase", "RE/BuyMerchant"}
+    }
+    
+    if not net then return nil end
+    
+    for _, name in ipairs(remoteNames[shopType] or {}) do
+        local remote = net:FindFirstChild(name)
+        if remote then return remote end
+    end
+    
+    for _, child in ipairs(net:GetDescendants()) do
+        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+            local lname = string.lower(child.Name)
+            if string.find(lname, string.lower(shopType)) or string.find(lname, "buy") then
+                return child
+            end
+        end
+    end
+    
+    return nil
+end
+
+local function BuyShopItem(shopType, itemName)
+    local remote = GetShopRemote(shopType)
+    if not remote then return false end
+    
+    pcall(function()
+        if remote:IsA("RemoteEvent") then
+            remote:FireServer(itemName)
+        elseif remote:IsA("RemoteFunction") then
+            remote:InvokeServer(itemName)
+        end
+    end)
+    
+    return true
+end
+
+-- =====================================================
+-- BAGIAN 9: HTTP REQUEST
+-- =====================================================
+local HttpRequest = syn and syn.request or http_request or request or (fluxus and fluxus.request)
+
+-- =====================================================
+-- BAGIAN 10: ICON CACHE & WEBHOOK
+-- =====================================================
+local IconCache = {}
+local IconWaiter = {}
+
+local function FetchFishIconAsync(fishId, callback)
+    if IconCache[fishId] then
+        callback(IconCache[fishId])
+        return
+    end
+    
+    if IconWaiter[fishId] then
+        table.insert(IconWaiter[fishId], callback)
+        return
+    end
+    
+    IconWaiter[fishId] = { callback }
+    
+    task.spawn(function()
+        local fish = FishDB[fishId]
+        if not fish or not fish.Icon then
+            callback("")
+            return
+        end
+        
+        local assetId = tostring(fish.Icon):match("%d+")
+        if not assetId then
+            callback("")
+            return
+        end
+        
+        local ok, res = pcall(function()
+            return HttpRequest({
+                Url = "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=420x420&format=Png",
+                Method = "GET"
+            })
+        end)
+        
+        if ok and res and res.Body then
+            local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+            if ok2 and data and data.data and data.data[1] then
+                IconCache[fishId] = data.data[1].imageUrl or ""
+            end
+        end
+        
+        for _, cb in ipairs(IconWaiter[fishId] or {}) do
+            cb(IconCache[fishId] or "")
+        end
+        IconWaiter[fishId] = nil
+    end)
+end
+
+local function IsRarityAllowed(fishId)
+    local fish = FishDB[fishId]
+    if not fish then return false end
+    if next(Settings.SelectedRarities) == nil then return true end
+    return Settings.SelectedRarities[fish.Tier] == true
+end
+
+local function BuildPayload(playerName, fishId, weight, mutation)
+    local fish = FishDB[fishId]
+    if not fish then return nil end
+    
+    local tier = fish.Tier
+    local rarityName = RARITY_MAP[tier] or "Unknown"
+    local iconUrl = IconCache[fishId] or ""
+    local dateStr = os.date("!%B %d, %Y")
+    
+    return {
+        username = "Vechnost Notifier",
+        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+        flags = 32768,
+        components = {{
+            type = 17,
+            components = {
+                { type = 10, content = "# NEW FISH CAUGHT!" },
+                { type = 14, spacing = 1, divider = true },
+                { type = 10, content = "__@" .. playerName .. " caught " .. string.upper(rarityName) .. " fish__" },
+                {
+                    type = 9,
+                    components = {
+                        { type = 10, content = "**Fish Name**" },
+                        { type = 10, content = "> " .. fish.Name }
+                    },
+                    accessory = iconUrl ~= "" and { type = 11, media = { url = iconUrl } } or nil
+                },
+                { type = 10, content = "**Rarity:** " .. rarityName },
+                { type = 10, content = "**Weight:** " .. string.format("%.1fkg", weight or 0) },
+                { type = 10, content = "**Mutation:** " .. (mutation or "None") },
+                { type = 14, spacing = 1, divider = true },
+                { type = 10, content = "-# " .. dateStr }
+            }
+        }}
+    }
+end
+
+local function SendWebhook(payload)
+    if Settings.Url == "" or not HttpRequest or not payload then return end
+    
+    pcall(function()
+        local url = Settings.Url
+        url = string.find(url, "?") and (url .. "&with_components=true") or (url .. "?with_components=true")
+        
+        HttpRequest({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payload)
+        })
+    end)
+end
+
+-- =====================================================
+-- BAGIAN 11: FISH DETECTION & LOGGER
+-- =====================================================
+local Connections = {}
+local ChatSentDedup = {}
+
+local function HandleFishCaught(playerArg, weightData, wrapper)
+    if not Settings.Active then return end
+    
+    local item = nil
+    if wrapper and typeof(wrapper) == "table" and wrapper.InventoryItem then
+        item = wrapper.InventoryItem
+    elseif weightData and typeof(weightData) == "table" and weightData.InventoryItem then
+        item = weightData.InventoryItem
+    end
+    
+    if not item or not item.Id or not item.UUID then return end
+    if not FishDB[item.Id] then return end
+    if not IsRarityAllowed(item.Id) then return end
+    if Settings.SentUUID[item.UUID] then return end
+    
+    Settings.SentUUID[item.UUID] = true
+    
+    local playerName = LocalPlayer.Name
+    if typeof(playerArg) == "Instance" and playerArg:IsA("Player") then
+        playerName = playerArg.Name
+    elseif typeof(playerArg) == "string" then
+        playerName = playerArg
+    end
+    
+    if not Settings.ServerWide and playerName ~= LocalPlayer.Name then return end
+    
+    local weight = weightData and typeof(weightData) == "table" and weightData.Weight or 0
+    local mutation = weightData and typeof(weightData) == "table" and weightData.Mutation or nil
+    
+    Settings.LogCount = Settings.LogCount + 1
+    
+    FetchFishIconAsync(item.Id, function()
+        SendWebhook(BuildPayload(playerName, item.Id, weight, mutation))
+    end)
+end
+
+local function StartLogger()
+    if Settings.Active then return true, "Already running" end
+    if not net or not ObtainedNewFish then return false, "Game remotes not found" end
+    
+    Settings.Active = true
+    Settings.SentUUID = {}
+    Settings.LogCount = 0
+    
+    pcall(function()
+        Connections[#Connections + 1] = ObtainedNewFish.OnClientEvent:Connect(HandleFishCaught)
+    end)
+    
+    return true, "Logger started"
+end
+
+local function StopLogger()
+    Settings.Active = false
+    for _, conn in ipairs(Connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    Connections = {}
+end
+
+-- =====================================================
+-- BAGIAN 12: FISHING AUTOMATION
+-- =====================================================
+local FishingRemotes = {}
+
+local function FindFishingRemotes()
+    if not net then return end
+    
+    for _, child in ipairs(net:GetDescendants()) do
+        if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+            local lname = string.lower(child.Name)
+            if string.find(lname, "cast") or string.find(lname, "throw") then
+                FishingRemotes.Cast = FishingRemotes.Cast or child
+            elseif string.find(lname, "reel") or string.find(lname, "pull") or string.find(lname, "catch") then
+                FishingRemotes.Reel = FishingRemotes.Reel or child
+            elseif string.find(lname, "shake") then
+                FishingRemotes.Shake = FishingRemotes.Shake or child
+            elseif string.find(lname, "sell") then
+                FishingRemotes.Sell = FishingRemotes.Sell or child
+            end
+        end
+    end
+end
+
+FindFishingRemotes()
+
+local function SimulateClick()
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+        task.wait(0.01)
+        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+    end)
+end
+
+local function IsFishBiting()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    
+    for _, gui in ipairs(pg:GetDescendants()) do
+        if gui:IsA("GuiObject") and gui.Visible then
+            local lname = string.lower(gui.Name)
+            if string.find(lname, "bite") or string.find(lname, "catch") or string.find(lname, "!") or string.find(lname, "reel") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function IsShakeActive()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return false end
+    
+    for _, gui in ipairs(pg:GetDescendants()) do
+        if gui:IsA("GuiObject") and gui.Visible then
+            local lname = string.lower(gui.Name)
+            if string.find(lname, "shake") or string.find(lname, "struggle") or string.find(lname, "minigame") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        
+        if FishingSettings.AntiAFK then
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new())
+            end)
+        end
+        
+        if FishingSettings.AutoCast then
+            pcall(function()
+                if FishingRemotes.Cast then
+                    if FishingRemotes.Cast:IsA("RemoteEvent") then
+                        FishingRemotes.Cast:FireServer()
+                    end
+                end
+                SimulateClick()
+            end)
+        end
+        
+        if FishingSettings.AutoReel and IsFishBiting() then
+            pcall(function()
+                if FishingRemotes.Reel then
+                    if FishingRemotes.Reel:IsA("RemoteEvent") then
+                        FishingRemotes.Reel:FireServer()
+                    end
+                end
+                SimulateClick()
+            end)
+        end
+        
+        if FishingSettings.AutoShake and IsShakeActive() then
+            for i = 1, FishingSettings.ClickSpeed do
+                if not FishingSettings.AutoShake then break end
+                pcall(function()
+                    if FishingRemotes.Shake then
+                        FishingRemotes.Shake:FireServer()
+                    end
+                    SimulateClick()
+                end)
+                task.wait(1 / FishingSettings.ClickSpeed)
+            end
+        end
+        
+        if FishingSettings.AutoSell then
+            pcall(function()
+                if FishingRemotes.Sell then
+                    FishingRemotes.Sell:FireServer("All")
+                end
+            end)
+        end
+    end
+end)
+
+-- =====================================================
+-- BAGIAN 13: TRADING SYSTEM
 -- =====================================================
 local TradeState = {
     TargetPlayer = nil,
-    PlayerList = {},
     Inventory = {},
     StoneInventory = {},
-    ByName = {
-        Active = false,
-        ItemName = nil,
-        Amount = 1,
-        Sent = 0,
-    },
-    ByCoin = {
-        Active = false,
-        TargetCoins = 0,
-        Sent = 0,
-    },
-    ByRarity = {
-        Active = false,
-        Rarity = nil,
-        RarityTier = nil,
-        Amount = 1,
-        Sent = 0,
-    },
-    ByStone = {
-        Active = false,
-        StoneName = nil,
-        Amount = 1,
-        Sent = 0,
-    },
+    ByName = { Active = false, ItemName = nil, Amount = 1, Sent = 0 },
+    ByCoin = { Active = false, TargetCoins = 0, Sent = 0 },
+    ByRarity = { Active = false, Rarity = nil, RarityTier = nil, Amount = 1, Sent = 0 },
+    ByStone = { Active = false, StoneName = nil, Amount = 1, Sent = 0 },
 }
 
 local STONE_LIST = { "Enchant Stone", "Evolved Stone" }
@@ -1197,14 +721,14 @@ local STONE_LIST = { "Enchant Stone", "Evolved Stone" }
 local function LoadInventory()
     TradeState.Inventory = {}
     TradeState.StoneInventory = {}
-
+    
     pcall(function()
         local inv = PlayerData:Get("Inventory")
         if not inv then return end
-
+        
         local items = inv.Items or inv
         if typeof(items) ~= "table" then return end
-
+        
         for _, item in pairs(items) do
             if typeof(item) == "table" then
                 local name = nil
@@ -1213,7 +737,7 @@ local function LoadInventory()
                 elseif item.Name then
                     name = tostring(item.Name)
                 end
-
+                
                 if name then
                     local isStone = false
                     for _, sName in ipairs(STONE_LIST) do
@@ -1223,7 +747,6 @@ local function LoadInventory()
                             break
                         end
                     end
-
                     if not isStone then
                         TradeState.Inventory[name] = (TradeState.Inventory[name] or 0) + 1
                     end
@@ -1231,18 +754,6 @@ local function LoadInventory()
             end
         end
     end)
-
-    if next(TradeState.Inventory) == nil then
-        pcall(function()
-            local Items = ReplicatedStorage:WaitForChild("Items", 5)
-            if not Items then return end
-            for fishId, fishData in pairs(FishDB) do
-                TradeState.Inventory[fishData.Name] = TradeState.Inventory[fishData.Name] or 0
-            end
-        end)
-    end
-
-    warn("[Vechnost] Inventory loaded")
 end
 
 local function GetInventoryItemNames()
@@ -1251,54 +762,32 @@ local function GetInventoryItemNames()
         table.insert(names, name)
     end
     table.sort(names)
-    if #names == 0 then names = {"(Inventory kosong)"}  end
-    return names
-end
-
-local function GetFishNamesByRarity(tier)
-    local names = {}
-    for _, fishData in pairs(FishDB) do
-        if fishData.Tier == tier then
-            table.insert(names, fishData.Name)
-        end
-    end
+    if #names == 0 then names = {"(Load inventory first)"} end
     return names
 end
 
 local TradeRemote = nil
 local function GetTradeRemote()
     if TradeRemote then return TradeRemote end
+    
     pcall(function()
-        local candidates = {
-            "RE/TradeRequest", "RE/SendTrade", "RE/InitiateTrade",
-            "RE/Trade", "TradeRequest", "SendTrade",
-        }
-        for _, name in ipairs(candidates) do
-            local r = net:FindFirstChild(name)
-            if r and r:IsA("RemoteEvent") then
-                TradeRemote = r
-                warn("[Vechnost] Trade remote found:", name)
-                return
-            end
-        end
-
         for _, child in pairs(net:GetDescendants()) do
             if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
                 if string.lower(child.Name):find("trade") then
                     TradeRemote = child
-                    warn("[Vechnost] Trade remote found (scan):", child.Name)
-                    return
+                    break
                 end
             end
         end
     end)
+    
     return TradeRemote
 end
 
 local function FireTradeItem(targetUsername, itemName, quantity)
-    quantity = quantity or 1
     local remote = GetTradeRemote()
-
+    if not remote then return false end
+    
     local targetPlayer = nil
     for _, p in pairs(Players:GetPlayers()) do
         if p.Name == targetUsername or p.DisplayName == targetUsername then
@@ -1306,44 +795,25 @@ local function FireTradeItem(targetUsername, itemName, quantity)
             break
         end
     end
-
-    if not targetPlayer then
-        warn("[Vechnost] Target player not found:", targetUsername)
-        return false
-    end
-
+    
+    if not targetPlayer then return false end
+    
     local fishId = FishNameToId[itemName] or FishNameToId[string.lower(itemName)]
-
-    local ok = false
+    
     pcall(function()
-        if remote then
-            if remote:IsA("RemoteEvent") then
-                remote:FireServer(targetPlayer, fishId or itemName, quantity)
-                ok = true
-            elseif remote:IsA("RemoteFunction") then
-                remote:InvokeServer(targetPlayer, fishId or itemName, quantity)
-                ok = true
-            end
-        end
-
-        if not ok then
-            pcall(function()
-                local re = net:FindFirstChild("RE/TradeItem") or net:FindFirstChild("RE/GiveItem")
-                if re then
-                    re:FireServer(targetPlayer, fishId or itemName, quantity)
-                    ok = true
-                end
-            end)
+        if remote:IsA("RemoteEvent") then
+            remote:FireServer(targetPlayer, fishId or itemName, quantity or 1)
+        elseif remote:IsA("RemoteFunction") then
+            remote:InvokeServer(targetPlayer, fishId or itemName, quantity or 1)
         end
     end)
-
-    return ok
+    
+    return true
 end
 
 -- =====================================================
--- BAGIAN 13: CUSTOM UI LIBRARY - DARK BLUE SIDEBAR DESIGN
+-- BAGIAN 14: UI COLOR SCHEME
 -- =====================================================
-
 local Colors = {
     Background = Color3.fromRGB(15, 17, 26),
     Sidebar = Color3.fromRGB(20, 24, 38),
@@ -1363,8 +833,12 @@ local Colors = {
     Error = Color3.fromRGB(255, 100, 100),
     Toggle = Color3.fromRGB(70, 130, 255),
     ToggleOff = Color3.fromRGB(60, 65, 90),
+    DropdownBg = Color3.fromRGB(20, 22, 35),
 }
 
+-- =====================================================
+-- BAGIAN 15: CREATE MAIN GUI
+-- =====================================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = GUI_NAMES.Main
 ScreenGui.ResetOnSpawn = false
@@ -1373,22 +847,20 @@ ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 680, 0, 450)
-MainFrame.Position = UDim2.new(0.5, -340, 0.5, -225)
+MainFrame.Size = UDim2.new(0, 720, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -360, 0.5, -240)
 MainFrame.BackgroundColor3 = Colors.Background
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
-local MainCorner = Instance.new("UICorner")
-MainCorner.CornerRadius = UDim.new(0, 12)
-MainCorner.Parent = MainFrame
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
-local MainStroke = Instance.new("UIStroke")
+local MainStroke = Instance.new("UIStroke", MainFrame)
 MainStroke.Color = Colors.Border
 MainStroke.Thickness = 1
-MainStroke.Parent = MainFrame
 
+-- Title Bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 45)
@@ -1396,12 +868,9 @@ TitleBar.BackgroundColor3 = Colors.Sidebar
 TitleBar.BorderSizePixel = 0
 TitleBar.Parent = MainFrame
 
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 12)
-TitleCorner.Parent = TitleBar
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 12)
 
 local TitleFix = Instance.new("Frame")
-TitleFix.Name = "TitleFix"
 TitleFix.Size = UDim2.new(1, 0, 0, 15)
 TitleFix.Position = UDim2.new(0, 0, 1, -15)
 TitleFix.BackgroundColor3 = Colors.Sidebar
@@ -1409,7 +878,6 @@ TitleFix.BorderSizePixel = 0
 TitleFix.Parent = TitleBar
 
 local TitleLabel = Instance.new("TextLabel")
-TitleLabel.Name = "Title"
 TitleLabel.Size = UDim2.new(1, -100, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
@@ -1421,7 +889,6 @@ TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TitleBar
 
 local CloseBtn = Instance.new("TextButton")
-CloseBtn.Name = "CloseBtn"
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
 CloseBtn.Position = UDim2.new(1, -40, 0.5, -15)
 CloseBtn.BackgroundColor3 = Colors.ContentItem
@@ -1431,13 +898,9 @@ CloseBtn.TextColor3 = Colors.Text
 CloseBtn.TextSize = 20
 CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.Parent = TitleBar
-
-local CloseBtnCorner = Instance.new("UICorner")
-CloseBtnCorner.CornerRadius = UDim.new(0, 6)
-CloseBtnCorner.Parent = CloseBtn
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 
 local MinBtn = Instance.new("TextButton")
-MinBtn.Name = "MinBtn"
 MinBtn.Size = UDim2.new(0, 30, 0, 30)
 MinBtn.Position = UDim2.new(1, -75, 0.5, -15)
 MinBtn.BackgroundColor3 = Colors.ContentItem
@@ -1447,47 +910,49 @@ MinBtn.TextColor3 = Colors.Text
 MinBtn.TextSize = 16
 MinBtn.Font = Enum.Font.GothamBold
 MinBtn.Parent = TitleBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
 
-local MinBtnCorner = Instance.new("UICorner")
-MinBtnCorner.CornerRadius = UDim.new(0, 6)
-MinBtnCorner.Parent = MinBtn
-
+-- Sidebar
 local Sidebar = Instance.new("Frame")
 Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 160, 1, -55)
+Sidebar.Size = UDim2.new(0, 150, 1, -55)
 Sidebar.Position = UDim2.new(0, 5, 0, 50)
 Sidebar.BackgroundColor3 = Colors.Sidebar
 Sidebar.BorderSizePixel = 0
 Sidebar.Parent = MainFrame
+Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 10)
 
-local SidebarCorner = Instance.new("UICorner")
-SidebarCorner.CornerRadius = UDim.new(0, 10)
-SidebarCorner.Parent = Sidebar
-
-local SidebarPadding = Instance.new("UIPadding")
+local SidebarPadding = Instance.new("UIPadding", Sidebar)
 SidebarPadding.PaddingTop = UDim.new(0, 8)
 SidebarPadding.PaddingBottom = UDim.new(0, 8)
 SidebarPadding.PaddingLeft = UDim.new(0, 8)
 SidebarPadding.PaddingRight = UDim.new(0, 8)
-SidebarPadding.Parent = Sidebar
 
-local SidebarLayout = Instance.new("UIListLayout")
+local SidebarLayout = Instance.new("UIListLayout", Sidebar)
 SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-SidebarLayout.Padding = UDim.new(0, 5)
-SidebarLayout.Parent = Sidebar
+SidebarLayout.Padding = UDim.new(0, 4)
 
+-- Content Area
 local ContentArea = Instance.new("Frame")
 ContentArea.Name = "ContentArea"
-ContentArea.Size = UDim2.new(1, -180, 1, -60)
-ContentArea.Position = UDim2.new(0, 175, 0, 55)
+ContentArea.Size = UDim2.new(1, -170, 1, -60)
+ContentArea.Position = UDim2.new(0, 165, 0, 55)
 ContentArea.BackgroundColor3 = Colors.Content
 ContentArea.BorderSizePixel = 0
 ContentArea.Parent = MainFrame
+Instance.new("UICorner", ContentArea).CornerRadius = UDim.new(0, 10)
 
-local ContentCorner = Instance.new("UICorner")
-ContentCorner.CornerRadius = UDim.new(0, 10)
-ContentCorner.Parent = ContentArea
+-- Dropdown Container (untuk menampilkan dropdown di atas semua elemen)
+local DropdownContainer = Instance.new("Frame")
+DropdownContainer.Name = "DropdownContainer"
+DropdownContainer.Size = UDim2.new(1, 0, 1, 0)
+DropdownContainer.BackgroundTransparency = 1
+DropdownContainer.ZIndex = 100
+DropdownContainer.Parent = ScreenGui
 
+-- =====================================================
+-- BAGIAN 16: TAB SYSTEM
+-- =====================================================
 local TabContents = {}
 local TabButtons = {}
 local CurrentTab = nil
@@ -1496,68 +961,65 @@ local Tabs = {
     {Name = "Info", Icon = "👤", LayoutOrder = 1},
     {Name = "Fishing", Icon = "🎣", LayoutOrder = 2},
     {Name = "Teleport", Icon = "📍", LayoutOrder = 3},
-    {Name = "Webhook", Icon = "🔔", LayoutOrder = 4},
-    {Name = "Setting", Icon = "⚙️", LayoutOrder = 5},
+    {Name = "Trading", Icon = "🔄", LayoutOrder = 4},
+    {Name = "Shop", Icon = "🛒", LayoutOrder = 5},
+    {Name = "Webhook", Icon = "🔔", LayoutOrder = 6},
+    {Name = "Setting", Icon = "⚙️", LayoutOrder = 7},
 }
 
 local function CreateTabButton(tabData)
     local TabBtn = Instance.new("TextButton")
     TabBtn.Name = tabData.Name .. "Tab"
-    TabBtn.Size = UDim2.new(1, 0, 0, 44)
+    TabBtn.Size = UDim2.new(1, 0, 0, 38)
     TabBtn.BackgroundColor3 = Colors.SidebarItem
     TabBtn.BorderSizePixel = 0
     TabBtn.Text = ""
     TabBtn.AutoButtonColor = false
     TabBtn.LayoutOrder = tabData.LayoutOrder
     TabBtn.Parent = Sidebar
-
-    local TabBtnCorner = Instance.new("UICorner")
-    TabBtnCorner.CornerRadius = UDim.new(0, 8)
-    TabBtnCorner.Parent = TabBtn
-
+    Instance.new("UICorner", TabBtn).CornerRadius = UDim.new(0, 8)
+    
     local IconLabel = Instance.new("TextLabel")
-    IconLabel.Name = "Icon"
-    IconLabel.Size = UDim2.new(0, 30, 1, 0)
-    IconLabel.Position = UDim2.new(0, 10, 0, 0)
+    IconLabel.Size = UDim2.new(0, 28, 1, 0)
+    IconLabel.Position = UDim2.new(0, 8, 0, 0)
     IconLabel.BackgroundTransparency = 1
     IconLabel.Text = tabData.Icon
     IconLabel.TextColor3 = Colors.Accent
-    IconLabel.TextSize = 18
+    IconLabel.TextSize = 16
     IconLabel.Font = Enum.Font.GothamBold
     IconLabel.Parent = TabBtn
-
+    
     local TextLabel = Instance.new("TextLabel")
-    TextLabel.Name = "Text"
-    TextLabel.Size = UDim2.new(1, -50, 1, 0)
-    TextLabel.Position = UDim2.new(0, 45, 0, 0)
+    TextLabel.Size = UDim2.new(1, -42, 1, 0)
+    TextLabel.Position = UDim2.new(0, 38, 0, 0)
     TextLabel.BackgroundTransparency = 1
     TextLabel.Text = tabData.Name
     TextLabel.TextColor3 = Colors.Text
-    TextLabel.TextSize = 14
+    TextLabel.TextSize = 13
     TextLabel.Font = Enum.Font.GothamSemibold
     TextLabel.TextXAlignment = Enum.TextXAlignment.Left
     TextLabel.Parent = TabBtn
-
+    
     TabBtn.MouseEnter:Connect(function()
         if CurrentTab ~= tabData.Name then
             TweenService:Create(TabBtn, TweenInfo.new(0.2), {BackgroundColor3 = Colors.SidebarItemHover}):Play()
         end
     end)
-
+    
     TabBtn.MouseLeave:Connect(function()
         if CurrentTab ~= tabData.Name then
             TweenService:Create(TabBtn, TweenInfo.new(0.2), {BackgroundColor3 = Colors.SidebarItem}):Play()
         end
     end)
-
+    
     return TabBtn
 end
 
 local function CreateTabContent(tabName)
     local Content = Instance.new("ScrollingFrame")
     Content.Name = tabName .. "Content"
-    Content.Size = UDim2.new(1, -20, 1, -20)
-    Content.Position = UDim2.new(0, 10, 0, 10)
+    Content.Size = UDim2.new(1, -16, 1, -16)
+    Content.Position = UDim2.new(0, 8, 0, 8)
     Content.BackgroundTransparency = 1
     Content.BorderSizePixel = 0
     Content.ScrollBarThickness = 4
@@ -1566,35 +1028,28 @@ local function CreateTabContent(tabName)
     Content.AutomaticCanvasSize = Enum.AutomaticSize.Y
     Content.Visible = false
     Content.Parent = ContentArea
-
-    local ContentLayout = Instance.new("UIListLayout")
+    
+    local ContentLayout = Instance.new("UIListLayout", Content)
     ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
     ContentLayout.Padding = UDim.new(0, 8)
-    ContentLayout.Parent = Content
-
-    local ContentPadding = Instance.new("UIPadding")
-    ContentPadding.PaddingTop = UDim.new(0, 5)
-    ContentPadding.PaddingBottom = UDim.new(0, 5)
-    ContentPadding.Parent = Content
-
+    
+    Instance.new("UIPadding", Content).PaddingBottom = UDim.new(0, 10)
+    
     return Content
 end
 
 local function SwitchTab(tabName)
     if CurrentTab == tabName then return end
-
+    
     for name, content in pairs(TabContents) do
         content.Visible = (name == tabName)
     end
-
+    
     for name, btn in pairs(TabButtons) do
-        if name == tabName then
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Colors.SidebarItemActive}):Play()
-        else
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Colors.SidebarItem}):Play()
-        end
+        local color = name == tabName and Colors.SidebarItemActive or Colors.SidebarItem
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color}):Play()
     end
-
+    
     CurrentTab = tabName
 end
 
@@ -1602,16 +1057,15 @@ for _, tabData in ipairs(Tabs) do
     local btn = CreateTabButton(tabData)
     TabButtons[tabData.Name] = btn
     TabContents[tabData.Name] = CreateTabContent(tabData.Name)
-
+    
     btn.MouseButton1Click:Connect(function()
         SwitchTab(tabData.Name)
     end)
 end
 
 -- =====================================================
--- BAGIAN 14: UI COMPONENT CREATORS
+-- BAGIAN 17: UI COMPONENT CREATORS
 -- =====================================================
-
 local LayoutOrderCounter = {}
 
 local function GetLayoutOrder(tabName)
@@ -1622,77 +1076,68 @@ end
 local function CreateSection(tabName, sectionTitle)
     local parent = TabContents[tabName]
     if not parent then return end
-
+    
     local Section = Instance.new("Frame")
     Section.Name = "Section_" .. sectionTitle
-    Section.Size = UDim2.new(1, 0, 0, 30)
+    Section.Size = UDim2.new(1, 0, 0, 28)
     Section.BackgroundTransparency = 1
     Section.LayoutOrder = GetLayoutOrder(tabName)
     Section.Parent = parent
-
+    
     local SectionLabel = Instance.new("TextLabel")
     SectionLabel.Size = UDim2.new(1, 0, 1, 0)
     SectionLabel.BackgroundTransparency = 1
     SectionLabel.Text = sectionTitle
     SectionLabel.TextColor3 = Colors.Accent
-    SectionLabel.TextSize = 16
+    SectionLabel.TextSize = 15
     SectionLabel.Font = Enum.Font.GothamBold
     SectionLabel.TextXAlignment = Enum.TextXAlignment.Left
     SectionLabel.Parent = Section
-
-    return Section
 end
 
 local function CreateParagraph(tabName, title, content)
     local parent = TabContents[tabName]
     if not parent then return end
-
+    
     local Paragraph = Instance.new("Frame")
     Paragraph.Name = "Paragraph_" .. title
-    Paragraph.Size = UDim2.new(1, 0, 0, 60)
+    Paragraph.Size = UDim2.new(1, 0, 0, 55)
     Paragraph.BackgroundColor3 = Colors.ContentItem
     Paragraph.BorderSizePixel = 0
     Paragraph.LayoutOrder = GetLayoutOrder(tabName)
     Paragraph.Parent = parent
-
-    local ParagraphCorner = Instance.new("UICorner")
-    ParagraphCorner.CornerRadius = UDim.new(0, 8)
-    ParagraphCorner.Parent = Paragraph
-
+    Instance.new("UICorner", Paragraph).CornerRadius = UDim.new(0, 8)
+    
     local TitleLabel = Instance.new("TextLabel")
     TitleLabel.Name = "Title"
-    TitleLabel.Size = UDim2.new(1, -20, 0, 22)
-    TitleLabel.Position = UDim2.new(0, 10, 0, 8)
+    TitleLabel.Size = UDim2.new(1, -20, 0, 20)
+    TitleLabel.Position = UDim2.new(0, 10, 0, 6)
     TitleLabel.BackgroundTransparency = 1
     TitleLabel.Text = title
     TitleLabel.TextColor3 = Colors.Text
-    TitleLabel.TextSize = 14
+    TitleLabel.TextSize = 13
     TitleLabel.Font = Enum.Font.GothamBold
     TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
     TitleLabel.Parent = Paragraph
-
+    
     local ContentLabel = Instance.new("TextLabel")
     ContentLabel.Name = "Content"
-    ContentLabel.Size = UDim2.new(1, -20, 0, 25)
-    ContentLabel.Position = UDim2.new(0, 10, 0, 28)
+    ContentLabel.Size = UDim2.new(1, -20, 0, 22)
+    ContentLabel.Position = UDim2.new(0, 10, 0, 26)
     ContentLabel.BackgroundTransparency = 1
     ContentLabel.Text = content
     ContentLabel.TextColor3 = Colors.TextDim
-    ContentLabel.TextSize = 12
+    ContentLabel.TextSize = 11
     ContentLabel.Font = Enum.Font.Gotham
     ContentLabel.TextXAlignment = Enum.TextXAlignment.Left
     ContentLabel.TextWrapped = true
     ContentLabel.Parent = Paragraph
-
-    local function UpdateParagraph(newTitle, newContent)
-        TitleLabel.Text = newTitle or TitleLabel.Text
-        ContentLabel.Text = newContent or ContentLabel.Text
-    end
-
+    
     return {
         Frame = Paragraph,
         Set = function(self, data)
-            UpdateParagraph(data.Title, data.Content)
+            TitleLabel.Text = data.Title or TitleLabel.Text
+            ContentLabel.Text = data.Content or ContentLabel.Text
         end
     }
 end
@@ -1700,262 +1145,313 @@ end
 local function CreateInput(tabName, name, placeholder, callback)
     local parent = TabContents[tabName]
     if not parent then return end
-
+    
     local InputFrame = Instance.new("Frame")
     InputFrame.Name = "Input_" .. name
-    InputFrame.Size = UDim2.new(1, 0, 0, 65)
+    InputFrame.Size = UDim2.new(1, 0, 0, 58)
     InputFrame.BackgroundColor3 = Colors.ContentItem
     InputFrame.BorderSizePixel = 0
     InputFrame.LayoutOrder = GetLayoutOrder(tabName)
     InputFrame.Parent = parent
-
-    local InputCorner = Instance.new("UICorner")
-    InputCorner.CornerRadius = UDim.new(0, 8)
-    InputCorner.Parent = InputFrame
-
+    Instance.new("UICorner", InputFrame).CornerRadius = UDim.new(0, 8)
+    
     local InputLabel = Instance.new("TextLabel")
-    InputLabel.Name = "Label"
-    InputLabel.Size = UDim2.new(1, -20, 0, 22)
-    InputLabel.Position = UDim2.new(0, 10, 0, 8)
+    InputLabel.Size = UDim2.new(1, -20, 0, 18)
+    InputLabel.Position = UDim2.new(0, 10, 0, 6)
     InputLabel.BackgroundTransparency = 1
     InputLabel.Text = name
     InputLabel.TextColor3 = Colors.Text
-    InputLabel.TextSize = 13
+    InputLabel.TextSize = 12
     InputLabel.Font = Enum.Font.GothamSemibold
     InputLabel.TextXAlignment = Enum.TextXAlignment.Left
     InputLabel.Parent = InputFrame
-
+    
     local TextBox = Instance.new("TextBox")
-    TextBox.Name = "TextBox"
-    TextBox.Size = UDim2.new(1, -20, 0, 28)
-    TextBox.Position = UDim2.new(0, 10, 0, 30)
+    TextBox.Size = UDim2.new(1, -20, 0, 26)
+    TextBox.Position = UDim2.new(0, 10, 0, 26)
     TextBox.BackgroundColor3 = Colors.Background
     TextBox.BorderSizePixel = 0
     TextBox.Text = ""
     TextBox.PlaceholderText = placeholder or ""
     TextBox.PlaceholderColor3 = Colors.TextMuted
     TextBox.TextColor3 = Colors.Text
-    TextBox.TextSize = 12
+    TextBox.TextSize = 11
     TextBox.Font = Enum.Font.Gotham
     TextBox.ClearTextOnFocus = false
     TextBox.Parent = InputFrame
-
-    local TextBoxCorner = Instance.new("UICorner")
-    TextBoxCorner.CornerRadius = UDim.new(0, 6)
-    TextBoxCorner.Parent = TextBox
-
-    local TextBoxPadding = Instance.new("UIPadding")
+    Instance.new("UICorner", TextBox).CornerRadius = UDim.new(0, 6)
+    
+    local TextBoxPadding = Instance.new("UIPadding", TextBox)
     TextBoxPadding.PaddingLeft = UDim.new(0, 10)
     TextBoxPadding.PaddingRight = UDim.new(0, 10)
-    TextBoxPadding.Parent = TextBox
-
+    
     TextBox.FocusLost:Connect(function()
-        if callback then
-            callback(TextBox.Text)
-        end
+        if callback then callback(TextBox.Text) end
     end)
-
+    
     return {
         Frame = InputFrame,
         TextBox = TextBox,
-        GetValue = function()
-            return TextBox.Text
-        end,
-        SetValue = function(self, value)
-            TextBox.Text = value
-        end
+        GetValue = function() return TextBox.Text end,
+        SetValue = function(self, value) TextBox.Text = value end
     }
 end
 
 local function CreateButton(tabName, name, callback)
     local parent = TabContents[tabName]
     if not parent then return end
-
+    
     local Button = Instance.new("TextButton")
     Button.Name = "Button_" .. name
-    Button.Size = UDim2.new(1, 0, 0, 38)
+    Button.Size = UDim2.new(1, 0, 0, 36)
     Button.BackgroundColor3 = Colors.Accent
     Button.BorderSizePixel = 0
     Button.Text = name
     Button.TextColor3 = Colors.Text
-    Button.TextSize = 13
+    Button.TextSize = 12
     Button.Font = Enum.Font.GothamSemibold
     Button.AutoButtonColor = false
     Button.LayoutOrder = GetLayoutOrder(tabName)
     Button.Parent = parent
-
-    local ButtonCorner = Instance.new("UICorner")
-    ButtonCorner.CornerRadius = UDim.new(0, 8)
-    ButtonCorner.Parent = Button
-
+    Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 8)
+    
     Button.MouseEnter:Connect(function()
         TweenService:Create(Button, TweenInfo.new(0.2), {BackgroundColor3 = Colors.AccentHover}):Play()
     end)
-
+    
     Button.MouseLeave:Connect(function()
         TweenService:Create(Button, TweenInfo.new(0.2), {BackgroundColor3 = Colors.Accent}):Play()
     end)
-
+    
     Button.MouseButton1Click:Connect(function()
         if callback then callback() end
     end)
-
+    
     return Button
 end
 
 local function CreateToggle(tabName, name, default, callback)
     local parent = TabContents[tabName]
     if not parent then return end
-
+    
     local ToggleState = default or false
-
+    
     local ToggleFrame = Instance.new("Frame")
     ToggleFrame.Name = "Toggle_" .. name
-    ToggleFrame.Size = UDim2.new(1, 0, 0, 45)
+    ToggleFrame.Size = UDim2.new(1, 0, 0, 42)
     ToggleFrame.BackgroundColor3 = Colors.ContentItem
     ToggleFrame.BorderSizePixel = 0
     ToggleFrame.LayoutOrder = GetLayoutOrder(tabName)
     ToggleFrame.Parent = parent
-
-    local ToggleCorner = Instance.new("UICorner")
-    ToggleCorner.CornerRadius = UDim.new(0, 8)
-    ToggleCorner.Parent = ToggleFrame
-
+    Instance.new("UICorner", ToggleFrame).CornerRadius = UDim.new(0, 8)
+    
     local ToggleLabel = Instance.new("TextLabel")
-    ToggleLabel.Name = "Label"
     ToggleLabel.Size = UDim2.new(1, -70, 1, 0)
     ToggleLabel.Position = UDim2.new(0, 12, 0, 0)
     ToggleLabel.BackgroundTransparency = 1
     ToggleLabel.Text = name
     ToggleLabel.TextColor3 = Colors.Text
-    ToggleLabel.TextSize = 13
+    ToggleLabel.TextSize = 12
     ToggleLabel.Font = Enum.Font.GothamSemibold
     ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
     ToggleLabel.Parent = ToggleFrame
-
+    
     local ToggleButton = Instance.new("TextButton")
-    ToggleButton.Name = "Toggle"
-    ToggleButton.Size = UDim2.new(0, 50, 0, 26)
-    ToggleButton.Position = UDim2.new(1, -60, 0.5, -13)
+    ToggleButton.Size = UDim2.new(0, 46, 0, 24)
+    ToggleButton.Position = UDim2.new(1, -56, 0.5, -12)
     ToggleButton.BackgroundColor3 = ToggleState and Colors.Toggle or Colors.ToggleOff
     ToggleButton.BorderSizePixel = 0
     ToggleButton.Text = ""
     ToggleButton.AutoButtonColor = false
     ToggleButton.Parent = ToggleFrame
-
-    local ToggleButtonCorner = Instance.new("UICorner")
-    ToggleButtonCorner.CornerRadius = UDim.new(1, 0)
-    ToggleButtonCorner.Parent = ToggleButton
-
+    Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(1, 0)
+    
     local ToggleCircle = Instance.new("Frame")
-    ToggleCircle.Name = "Circle"
-    ToggleCircle.Size = UDim2.new(0, 20, 0, 20)
-    ToggleCircle.Position = ToggleState and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+    ToggleCircle.Size = UDim2.new(0, 18, 0, 18)
+    ToggleCircle.Position = ToggleState and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
     ToggleCircle.BackgroundColor3 = Colors.Text
     ToggleCircle.BorderSizePixel = 0
     ToggleCircle.Parent = ToggleButton
-
-    local ToggleCircleCorner = Instance.new("UICorner")
-    ToggleCircleCorner.CornerRadius = UDim.new(1, 0)
-    ToggleCircleCorner.Parent = ToggleCircle
-
+    Instance.new("UICorner", ToggleCircle).CornerRadius = UDim.new(1, 0)
+    
     local function UpdateToggle()
-        local targetPos = ToggleState and UDim2.new(1, -23, 0.5, -10) or UDim2.new(0, 3, 0.5, -10)
+        local targetPos = ToggleState and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
         local targetColor = ToggleState and Colors.Toggle or Colors.ToggleOff
-
         TweenService:Create(ToggleCircle, TweenInfo.new(0.2), {Position = targetPos}):Play()
         TweenService:Create(ToggleButton, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
     end
-
+    
     ToggleButton.MouseButton1Click:Connect(function()
         ToggleState = not ToggleState
         UpdateToggle()
         if callback then callback(ToggleState) end
     end)
-
+    
     return {
         Frame = ToggleFrame,
         SetValue = function(self, value)
             ToggleState = value
             UpdateToggle()
         end,
-        GetValue = function()
-            return ToggleState
-        end
+        GetValue = function() return ToggleState end
     }
 end
 
-local function CreateDropdown(tabName, name, options, default, multiSelect, callback)
+local function CreateSlider(tabName, name, min, max, default, callback)
     local parent = TabContents[tabName]
     if not parent then return end
-
-    local SelectedOptions = {}
-    if default then
-        if type(default) == "table" then
-            for _, v in ipairs(default) do
-                SelectedOptions[v] = true
-            end
-        else
-            SelectedOptions[default] = true
-        end
+    
+    local SliderValue = default or min
+    
+    local SliderFrame = Instance.new("Frame")
+    SliderFrame.Name = "Slider_" .. name
+    SliderFrame.Size = UDim2.new(1, 0, 0, 52)
+    SliderFrame.BackgroundColor3 = Colors.ContentItem
+    SliderFrame.BorderSizePixel = 0
+    SliderFrame.LayoutOrder = GetLayoutOrder(tabName)
+    SliderFrame.Parent = parent
+    Instance.new("UICorner", SliderFrame).CornerRadius = UDim.new(0, 8)
+    
+    local SliderLabel = Instance.new("TextLabel")
+    SliderLabel.Size = UDim2.new(1, -60, 0, 18)
+    SliderLabel.Position = UDim2.new(0, 10, 0, 6)
+    SliderLabel.BackgroundTransparency = 1
+    SliderLabel.Text = name
+    SliderLabel.TextColor3 = Colors.Text
+    SliderLabel.TextSize = 12
+    SliderLabel.Font = Enum.Font.GothamSemibold
+    SliderLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SliderLabel.Parent = SliderFrame
+    
+    local ValueLabel = Instance.new("TextLabel")
+    ValueLabel.Size = UDim2.new(0, 45, 0, 18)
+    ValueLabel.Position = UDim2.new(1, -55, 0, 6)
+    ValueLabel.BackgroundTransparency = 1
+    ValueLabel.Text = tostring(SliderValue)
+    ValueLabel.TextColor3 = Colors.Accent
+    ValueLabel.TextSize = 12
+    ValueLabel.Font = Enum.Font.GothamBold
+    ValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    ValueLabel.Parent = SliderFrame
+    
+    local SliderTrack = Instance.new("Frame")
+    SliderTrack.Size = UDim2.new(1, -20, 0, 8)
+    SliderTrack.Position = UDim2.new(0, 10, 0, 34)
+    SliderTrack.BackgroundColor3 = Colors.Background
+    SliderTrack.BorderSizePixel = 0
+    SliderTrack.Parent = SliderFrame
+    Instance.new("UICorner", SliderTrack).CornerRadius = UDim.new(1, 0)
+    
+    local SliderFill = Instance.new("Frame")
+    SliderFill.Size = UDim2.new((SliderValue - min) / (max - min), 0, 1, 0)
+    SliderFill.BackgroundColor3 = Colors.Accent
+    SliderFill.BorderSizePixel = 0
+    SliderFill.Parent = SliderTrack
+    Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
+    
+    local SliderKnob = Instance.new("Frame")
+    SliderKnob.Size = UDim2.new(0, 14, 0, 14)
+    SliderKnob.Position = UDim2.new((SliderValue - min) / (max - min), -7, 0.5, -7)
+    SliderKnob.BackgroundColor3 = Colors.Text
+    SliderKnob.BorderSizePixel = 0
+    SliderKnob.Parent = SliderTrack
+    Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1, 0)
+    
+    local draggingSlider = false
+    
+    local function UpdateSlider(value)
+        SliderValue = math.clamp(math.floor(value), min, max)
+        local percent = (SliderValue - min) / (max - min)
+        SliderFill.Size = UDim2.new(percent, 0, 1, 0)
+        SliderKnob.Position = UDim2.new(percent, -7, 0.5, -7)
+        ValueLabel.Text = tostring(SliderValue)
+        if callback then callback(SliderValue) end
     end
+    
+    SliderTrack.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingSlider = true
+            local percent = math.clamp((input.Position.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
+            UpdateSlider(min + percent * (max - min))
+        end
+    end)
+    
+    SliderTrack.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            draggingSlider = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local percent = math.clamp((input.Position.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
+            UpdateSlider(min + percent * (max - min))
+        end
+    end)
+    
+    return {
+        Frame = SliderFrame,
+        SetValue = function(self, value) UpdateSlider(value) end,
+        GetValue = function() return SliderValue end
+    }
+end
 
+-- =====================================================
+-- BAGIAN 18: FIXED DROPDOWN COMPONENT
+-- =====================================================
+local ActiveDropdown = nil
+
+local function CreateDropdown(tabName, name, options, default, callback)
+    local parent = TabContents[tabName]
+    if not parent then return end
+    
+    local SelectedOption = default
     local IsOpen = false
-
+    local OptionsFrameRef = nil
+    
     local DropdownFrame = Instance.new("Frame")
     DropdownFrame.Name = "Dropdown_" .. name
-    DropdownFrame.Size = UDim2.new(1, 0, 0, 65)
+    DropdownFrame.Size = UDim2.new(1, 0, 0, 58)
     DropdownFrame.BackgroundColor3 = Colors.ContentItem
     DropdownFrame.BorderSizePixel = 0
-    DropdownFrame.ClipsDescendants = true
     DropdownFrame.LayoutOrder = GetLayoutOrder(tabName)
     DropdownFrame.Parent = parent
-
-    local DropdownCorner = Instance.new("UICorner")
-    DropdownCorner.CornerRadius = UDim.new(0, 8)
-    DropdownCorner.Parent = DropdownFrame
-
+    Instance.new("UICorner", DropdownFrame).CornerRadius = UDim.new(0, 8)
+    
     local DropdownLabel = Instance.new("TextLabel")
-    DropdownLabel.Name = "Label"
-    DropdownLabel.Size = UDim2.new(1, -20, 0, 22)
-    DropdownLabel.Position = UDim2.new(0, 10, 0, 8)
+    DropdownLabel.Size = UDim2.new(1, -20, 0, 18)
+    DropdownLabel.Position = UDim2.new(0, 10, 0, 6)
     DropdownLabel.BackgroundTransparency = 1
     DropdownLabel.Text = name
     DropdownLabel.TextColor3 = Colors.Text
-    DropdownLabel.TextSize = 13
+    DropdownLabel.TextSize = 12
     DropdownLabel.Font = Enum.Font.GothamSemibold
     DropdownLabel.TextXAlignment = Enum.TextXAlignment.Left
     DropdownLabel.Parent = DropdownFrame
-
+    
     local DropdownButton = Instance.new("TextButton")
-    DropdownButton.Name = "Button"
-    DropdownButton.Size = UDim2.new(1, -20, 0, 28)
-    DropdownButton.Position = UDim2.new(0, 10, 0, 30)
+    DropdownButton.Size = UDim2.new(1, -20, 0, 26)
+    DropdownButton.Position = UDim2.new(0, 10, 0, 26)
     DropdownButton.BackgroundColor3 = Colors.Background
     DropdownButton.BorderSizePixel = 0
     DropdownButton.Text = ""
     DropdownButton.AutoButtonColor = false
     DropdownButton.Parent = DropdownFrame
-
-    local DropdownButtonCorner = Instance.new("UICorner")
-    DropdownButtonCorner.CornerRadius = UDim.new(0, 6)
-    DropdownButtonCorner.Parent = DropdownButton
-
+    Instance.new("UICorner", DropdownButton).CornerRadius = UDim.new(0, 6)
+    
     local SelectedLabel = Instance.new("TextLabel")
-    SelectedLabel.Name = "Selected"
     SelectedLabel.Size = UDim2.new(1, -30, 1, 0)
     SelectedLabel.Position = UDim2.new(0, 10, 0, 0)
     SelectedLabel.BackgroundTransparency = 1
-    SelectedLabel.Text = "Select..."
-    SelectedLabel.TextColor3 = Colors.TextDim
-    SelectedLabel.TextSize = 12
+    SelectedLabel.Text = SelectedOption or "Select..."
+    SelectedLabel.TextColor3 = SelectedOption and Colors.Text or Colors.TextMuted
+    SelectedLabel.TextSize = 11
     SelectedLabel.Font = Enum.Font.Gotham
     SelectedLabel.TextXAlignment = Enum.TextXAlignment.Left
     SelectedLabel.TextTruncate = Enum.TextTruncate.AtEnd
     SelectedLabel.Parent = DropdownButton
-
+    
     local ArrowLabel = Instance.new("TextLabel")
-    ArrowLabel.Name = "Arrow"
     ArrowLabel.Size = UDim2.new(0, 20, 1, 0)
     ArrowLabel.Position = UDim2.new(1, -25, 0, 0)
     ArrowLabel.BackgroundTransparency = 1
@@ -1964,182 +1460,147 @@ local function CreateDropdown(tabName, name, options, default, multiSelect, call
     ArrowLabel.TextSize = 10
     ArrowLabel.Font = Enum.Font.Gotham
     ArrowLabel.Parent = DropdownButton
-
-    local OptionsFrame = Instance.new("Frame")
-    OptionsFrame.Name = "Options"
-    OptionsFrame.Size = UDim2.new(1, -20, 0, 0)
-    OptionsFrame.Position = UDim2.new(0, 10, 0, 62)
-    OptionsFrame.BackgroundColor3 = Colors.Background
-    OptionsFrame.BorderSizePixel = 0
-    OptionsFrame.ClipsDescendants = true
-    OptionsFrame.Parent = DropdownFrame
-
-    local OptionsCorner = Instance.new("UICorner")
-    OptionsCorner.CornerRadius = UDim.new(0, 6)
-    OptionsCorner.Parent = OptionsFrame
-
-    local OptionsLayout = Instance.new("UIListLayout")
-    OptionsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    OptionsLayout.Padding = UDim.new(0, 2)
-    OptionsLayout.Parent = OptionsFrame
-
-    local OptionsPadding = Instance.new("UIPadding")
-    OptionsPadding.PaddingTop = UDim.new(0, 4)
-    OptionsPadding.PaddingBottom = UDim.new(0, 4)
-    OptionsPadding.PaddingLeft = UDim.new(0, 4)
-    OptionsPadding.PaddingRight = UDim.new(0, 4)
-    OptionsPadding.Parent = OptionsFrame
-
-    local OptionButtons = {}
-
-    local function UpdateSelectedText()
-        local selected = {}
-        for opt, _ in pairs(SelectedOptions) do
-            table.insert(selected, opt)
+    
+    local function CloseDropdown()
+        if OptionsFrameRef then
+            OptionsFrameRef:Destroy()
+            OptionsFrameRef = nil
         end
-        if #selected == 0 then
-            SelectedLabel.Text = "Select..."
-            SelectedLabel.TextColor3 = Colors.TextMuted
+        IsOpen = false
+        TweenService:Create(ArrowLabel, TweenInfo.new(0.2), {Rotation = 0}):Play()
+        ActiveDropdown = nil
+    end
+    
+    local function OpenDropdown()
+        if ActiveDropdown and ActiveDropdown ~= CloseDropdown then
+            ActiveDropdown()
+        end
+        
+        ActiveDropdown = CloseDropdown
+        IsOpen = true
+        TweenService:Create(ArrowLabel, TweenInfo.new(0.2), {Rotation = 180}):Play()
+        
+        local buttonPos = DropdownButton.AbsolutePosition
+        local buttonSize = DropdownButton.AbsoluteSize
+        
+        local OptionsFrame = Instance.new("Frame")
+        OptionsFrame.Name = "DropdownOptions"
+        OptionsFrame.Size = UDim2.new(0, buttonSize.X, 0, math.min(#options * 28 + 8, 150))
+        OptionsFrame.Position = UDim2.fromOffset(buttonPos.X, buttonPos.Y + buttonSize.Y + 5)
+        OptionsFrame.BackgroundColor3 = Colors.DropdownBg
+        OptionsFrame.BorderSizePixel = 0
+        OptionsFrame.ZIndex = 100
+        OptionsFrame.Parent = DropdownContainer
+        Instance.new("UICorner", OptionsFrame).CornerRadius = UDim.new(0, 6)
+        
+        local OptionsStroke = Instance.new("UIStroke", OptionsFrame)
+        OptionsStroke.Color = Colors.Border
+        OptionsStroke.Thickness = 1
+        
+        local OptionsScroll = Instance.new("ScrollingFrame")
+        OptionsScroll.Size = UDim2.new(1, -8, 1, -8)
+        OptionsScroll.Position = UDim2.new(0, 4, 0, 4)
+        OptionsScroll.BackgroundTransparency = 1
+        OptionsScroll.BorderSizePixel = 0
+        OptionsScroll.ScrollBarThickness = 3
+        OptionsScroll.ScrollBarImageColor3 = Colors.Accent
+        OptionsScroll.CanvasSize = UDim2.new(0, 0, 0, #options * 28)
+        OptionsScroll.ZIndex = 101
+        OptionsScroll.Parent = OptionsFrame
+        
+        local OptionsLayout = Instance.new("UIListLayout", OptionsScroll)
+        OptionsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        OptionsLayout.Padding = UDim.new(0, 2)
+        
+        OptionsFrameRef = OptionsFrame
+        
+        for i, optionName in ipairs(options) do
+            local OptBtn = Instance.new("TextButton")
+            OptBtn.Name = optionName
+            OptBtn.Size = UDim2.new(1, 0, 0, 26)
+            OptBtn.BackgroundColor3 = optionName == SelectedOption and Colors.Accent or Colors.ContentItem
+            OptBtn.BorderSizePixel = 0
+            OptBtn.Text = optionName
+            OptBtn.TextColor3 = Colors.Text
+            OptBtn.TextSize = 11
+            OptBtn.Font = Enum.Font.Gotham
+            OptBtn.AutoButtonColor = false
+            OptBtn.LayoutOrder = i
+            OptBtn.ZIndex = 102
+            OptBtn.Parent = OptionsScroll
+            Instance.new("UICorner", OptBtn).CornerRadius = UDim.new(0, 4)
+            
+            OptBtn.MouseEnter:Connect(function()
+                if optionName ~= SelectedOption then
+                    TweenService:Create(OptBtn, TweenInfo.new(0.1), {BackgroundColor3 = Colors.ContentItemHover}):Play()
+                end
+            end)
+            
+            OptBtn.MouseLeave:Connect(function()
+                if optionName ~= SelectedOption then
+                    TweenService:Create(OptBtn, TweenInfo.new(0.1), {BackgroundColor3 = Colors.ContentItem}):Play()
+                end
+            end)
+            
+            OptBtn.MouseButton1Click:Connect(function()
+                SelectedOption = optionName
+                SelectedLabel.Text = optionName
+                SelectedLabel.TextColor3 = Colors.Text
+                
+                if callback then callback(optionName) end
+                
+                CloseDropdown()
+            end)
+        end
+    end
+    
+    DropdownButton.MouseButton1Click:Connect(function()
+        if IsOpen then
+            CloseDropdown()
         else
-            SelectedLabel.Text = table.concat(selected, ", ")
-            SelectedLabel.TextColor3 = Colors.Text
+            OpenDropdown()
         end
-    end
-
-    local function CreateOptionButton(optionName)
-        local OptBtn = Instance.new("TextButton")
-        OptBtn.Name = optionName
-        OptBtn.Size = UDim2.new(1, 0, 0, 26)
-        OptBtn.BackgroundColor3 = SelectedOptions[optionName] and Colors.Accent or Colors.ContentItem
-        OptBtn.BorderSizePixel = 0
-        OptBtn.Text = optionName
-        OptBtn.TextColor3 = Colors.Text
-        OptBtn.TextSize = 12
-        OptBtn.Font = Enum.Font.Gotham
-        OptBtn.AutoButtonColor = false
-        OptBtn.Parent = OptionsFrame
-
-        local OptBtnCorner = Instance.new("UICorner")
-        OptBtnCorner.CornerRadius = UDim.new(0, 4)
-        OptBtnCorner.Parent = OptBtn
-
-        OptBtn.MouseEnter:Connect(function()
-            if not SelectedOptions[optionName] then
-                TweenService:Create(OptBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItemHover}):Play()
-            end
-        end)
-
-        OptBtn.MouseLeave:Connect(function()
-            if not SelectedOptions[optionName] then
-                TweenService:Create(OptBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItem}):Play()
-            end
-        end)
-
-        OptBtn.MouseButton1Click:Connect(function()
-            if multiSelect then
-                SelectedOptions[optionName] = not SelectedOptions[optionName]
-                TweenService:Create(OptBtn, TweenInfo.new(0.15), {
-                    BackgroundColor3 = SelectedOptions[optionName] and Colors.Accent or Colors.ContentItem
-                }):Play()
-            else
-                for opt, _ in pairs(SelectedOptions) do
-                    SelectedOptions[opt] = nil
-                    if OptionButtons[opt] then
-                        TweenService:Create(OptionButtons[opt], TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItem}):Play()
-                    end
-                end
-                SelectedOptions[optionName] = true
-                TweenService:Create(OptBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Accent}):Play()
-            end
-
-            UpdateSelectedText()
-
-            if callback then
-                local selected = {}
-                for opt, _ in pairs(SelectedOptions) do
-                    table.insert(selected, opt)
-                end
-                callback(selected)
-            end
-        end)
-
-        OptionButtons[optionName] = OptBtn
-        return OptBtn
-    end
-
-    local function PopulateOptions()
-        for _, child in pairs(OptionsFrame:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
-            end
-        end
-        OptionButtons = {}
-
-        for _, opt in ipairs(options) do
-            CreateOptionButton(opt)
-        end
-    end
-
-    PopulateOptions()
-    UpdateSelectedText()
-
-    local function ToggleDropdown()
-        IsOpen = not IsOpen
-        local optionsHeight = math.min(#options * 28 + 10, 150)
-
-        TweenService:Create(DropdownFrame, TweenInfo.new(0.25), {
-            Size = UDim2.new(1, 0, 0, IsOpen and (65 + optionsHeight) or 65)
-        }):Play()
-
-        TweenService:Create(OptionsFrame, TweenInfo.new(0.25), {
-            Size = UDim2.new(1, -20, 0, IsOpen and optionsHeight or 0)
-        }):Play()
-
-        TweenService:Create(ArrowLabel, TweenInfo.new(0.25), {
-            Rotation = IsOpen and 180 or 0
-        }):Play()
-    end
-
-    DropdownButton.MouseButton1Click:Connect(ToggleDropdown)
-
+    end)
+    
     return {
         Frame = DropdownFrame,
         Refresh = function(self, newOptions, keepSelected)
             options = newOptions
             if not keepSelected then
-                SelectedOptions = {}
+                SelectedOption = nil
+                SelectedLabel.Text = "Select..."
+                SelectedLabel.TextColor3 = Colors.TextMuted
             end
-            PopulateOptions()
-            UpdateSelectedText()
+            if IsOpen then
+                CloseDropdown()
+            end
         end,
-        SetValue = function(self, values)
-            SelectedOptions = {}
-            if type(values) == "table" then
-                for _, v in ipairs(values) do
-                    SelectedOptions[v] = true
-                end
-            else
-                SelectedOptions[values] = true
-            end
-            for opt, btn in pairs(OptionButtons) do
-                btn.BackgroundColor3 = SelectedOptions[opt] and Colors.Accent or Colors.ContentItem
-            end
-            UpdateSelectedText()
+        SetValue = function(self, value)
+            SelectedOption = value
+            SelectedLabel.Text = value or "Select..."
+            SelectedLabel.TextColor3 = value and Colors.Text or Colors.TextMuted
         end,
-        GetValue = function()
-            local selected = {}
-            for opt, _ in pairs(SelectedOptions) do
-                table.insert(selected, opt)
-            end
-            return selected
-        end
+        GetValue = function() return SelectedOption end
     }
 end
 
--- =====================================================
--- BAGIAN 15: NOTIFICATION SYSTEM
--- =====================================================
+-- Close dropdown when clicking outside
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if ActiveDropdown then
+            task.defer(function()
+                task.wait(0.05)
+                if ActiveDropdown then
+                    ActiveDropdown()
+                end
+            end)
+        end
+    end
+end)
 
+-- =====================================================
+-- BAGIAN 19: NOTIFICATION SYSTEM
+-- =====================================================
 local NotificationContainer = Instance.new("Frame")
 NotificationContainer.Name = "Notifications"
 NotificationContainer.Size = UDim2.new(0, 280, 1, 0)
@@ -2147,67 +1608,54 @@ NotificationContainer.Position = UDim2.new(1, -290, 0, 0)
 NotificationContainer.BackgroundTransparency = 1
 NotificationContainer.Parent = ScreenGui
 
-local NotificationLayout = Instance.new("UIListLayout")
+local NotificationLayout = Instance.new("UIListLayout", NotificationContainer)
 NotificationLayout.SortOrder = Enum.SortOrder.LayoutOrder
 NotificationLayout.Padding = UDim.new(0, 8)
 NotificationLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-NotificationLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-NotificationLayout.Parent = NotificationContainer
 
-local NotificationPadding = Instance.new("UIPadding")
-NotificationPadding.PaddingBottom = UDim.new(0, 20)
-NotificationPadding.PaddingRight = UDim.new(0, 10)
-NotificationPadding.Parent = NotificationContainer
+Instance.new("UIPadding", NotificationContainer).PaddingBottom = UDim.new(0, 20)
 
 local function Notify(title, content, duration)
     duration = duration or 3
-
+    
     local Notification = Instance.new("Frame")
-    Notification.Name = "Notification"
-    Notification.Size = UDim2.new(0, 260, 0, 70)
+    Notification.Size = UDim2.new(0, 260, 0, 65)
     Notification.BackgroundColor3 = Colors.Sidebar
     Notification.BorderSizePixel = 0
     Notification.BackgroundTransparency = 1
     Notification.Parent = NotificationContainer
-
-    local NotifCorner = Instance.new("UICorner")
-    NotifCorner.CornerRadius = UDim.new(0, 10)
-    NotifCorner.Parent = Notification
-
-    local NotifStroke = Instance.new("UIStroke")
+    Instance.new("UICorner", Notification).CornerRadius = UDim.new(0, 10)
+    
+    local NotifStroke = Instance.new("UIStroke", Notification)
     NotifStroke.Color = Colors.Accent
-    NotifStroke.Thickness = 1
     NotifStroke.Transparency = 1
-    NotifStroke.Parent = Notification
-
+    
     local NotifTitle = Instance.new("TextLabel")
-    NotifTitle.Name = "Title"
-    NotifTitle.Size = UDim2.new(1, -20, 0, 22)
-    NotifTitle.Position = UDim2.new(0, 10, 0, 10)
+    NotifTitle.Size = UDim2.new(1, -20, 0, 20)
+    NotifTitle.Position = UDim2.new(0, 10, 0, 8)
     NotifTitle.BackgroundTransparency = 1
     NotifTitle.Text = title
     NotifTitle.TextColor3 = Colors.Accent
-    NotifTitle.TextSize = 14
+    NotifTitle.TextSize = 13
     NotifTitle.Font = Enum.Font.GothamBold
     NotifTitle.TextXAlignment = Enum.TextXAlignment.Left
     NotifTitle.Parent = Notification
-
+    
     local NotifContent = Instance.new("TextLabel")
-    NotifContent.Name = "Content"
-    NotifContent.Size = UDim2.new(1, -20, 0, 30)
-    NotifContent.Position = UDim2.new(0, 10, 0, 32)
+    NotifContent.Size = UDim2.new(1, -20, 0, 28)
+    NotifContent.Position = UDim2.new(0, 10, 0, 28)
     NotifContent.BackgroundTransparency = 1
     NotifContent.Text = content
     NotifContent.TextColor3 = Colors.TextDim
-    NotifContent.TextSize = 12
+    NotifContent.TextSize = 11
     NotifContent.Font = Enum.Font.Gotham
     NotifContent.TextXAlignment = Enum.TextXAlignment.Left
     NotifContent.TextWrapped = true
     NotifContent.Parent = Notification
-
+    
     TweenService:Create(Notification, TweenInfo.new(0.3), {BackgroundTransparency = 0}):Play()
     TweenService:Create(NotifStroke, TweenInfo.new(0.3), {Transparency = 0}):Play()
-
+    
     task.delay(duration, function()
         TweenService:Create(Notification, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
         TweenService:Create(NotifStroke, TweenInfo.new(0.3), {Transparency = 1}):Play()
@@ -2217,14 +1665,12 @@ local function Notify(title, content, duration)
 end
 
 -- =====================================================
--- BAGIAN 16: POPULATE TAB CONTENTS
+-- BAGIAN 20: POPULATE TAB CONTENTS
 -- =====================================================
 
 -- ===== INFO TAB =====
 CreateSection("Info", "Player Information")
-
-local InfoPlayerName = CreateParagraph("Info", "Player", LocalPlayer.Name)
-
+CreateParagraph("Info", "Player", LocalPlayer.Name)
 local InfoStats = CreateParagraph("Info", "Statistics", "Loading...")
 
 task.spawn(function()
@@ -2232,202 +1678,374 @@ task.spawn(function()
         local stats = GetPlayerStats()
         InfoStats:Set({
             Title = "Statistics",
-            Content = string.format("Coins: %s | Fish Caught: %s | Backpack: %d/%d",
-                FormatNumber(stats.Coins),
-                FormatNumber(stats.TotalCaught),
-                stats.BackpackCount,
-                stats.BackpackMax
-            )
+            Content = string.format("Coins: %s | Fish: %s | Backpack: %d/%d",
+                FormatNumber(stats.Coins), FormatNumber(stats.TotalCaught),
+                stats.BackpackCount, stats.BackpackMax)
         })
     end
 end)
 
 CreateSection("Info", "About")
-
-CreateParagraph("Info", "Vechnost v2.0.0", "Server-Wide Fish Webhook Logger + Auto Trading System\nby Vechnost Team")
+CreateParagraph("Info", "Vechnost v2.5.0", "Complete Fish It Automation Suite\nby Vechnost Team")
 
 -- ===== FISHING TAB =====
 CreateSection("Fishing", "Auto Fishing")
 
-CreateParagraph("Fishing", "Coming Soon", "Auto Fishing features akan segera hadir!")
+CreateToggle("Fishing", "Auto Cast", false, function(v)
+    FishingSettings.AutoCast = v
+    Notify("Vechnost", v and "Auto Cast ON" or "Auto Cast OFF", 2)
+end)
+
+CreateToggle("Fishing", "Auto Reel", false, function(v)
+    FishingSettings.AutoReel = v
+    Notify("Vechnost", v and "Auto Reel ON" or "Auto Reel OFF", 2)
+end)
+
+CreateToggle("Fishing", "Auto Shake", false, function(v)
+    FishingSettings.AutoShake = v
+    Notify("Vechnost", v and "Auto Shake ON" or "Auto Shake OFF", 2)
+end)
+
+CreateSection("Fishing", "Clicker Settings")
+CreateSlider("Fishing", "Click Speed (CPS)", 10, 100, 50, function(v)
+    FishingSettings.ClickSpeed = v
+end)
+
+CreateToggle("Fishing", "Perfect Catch", false, function(v)
+    FishingSettings.PerfectCatch = v
+    Notify("Vechnost", v and "Perfect Catch ON" or "Perfect Catch OFF", 2)
+end)
+
+CreateSection("Fishing", "Utility")
+CreateToggle("Fishing", "Anti AFK", false, function(v)
+    FishingSettings.AntiAFK = v
+    Notify("Vechnost", v and "Anti AFK ON" or "Anti AFK OFF", 2)
+end)
+
+CreateToggle("Fishing", "Auto Sell", false, function(v)
+    FishingSettings.AutoSell = v
+    Notify("Vechnost", v and "Auto Sell ON" or "Auto Sell OFF", 2)
+end)
 
 -- ===== TELEPORT TAB =====
 CreateSection("Teleport", "Island Teleport")
 
-local TeleportStatusParagraph = CreateParagraph("Teleport", "Teleport Status", "Found " .. #TeleportLocations .. " locations")
-
-local TeleportDropdown = CreateDropdown("Teleport", "Select Island", GetTeleportLocationNames(), nil, false, function(selected)
-end)
-
-CreateButton("Teleport", "Teleport", function()
-    local selected = TeleportDropdown:GetValue()
-    if #selected == 0 or selected[1] == "(No locations found)" then
-        Notify("Vechnost", "Pilih lokasi terlebih dahulu!", 3)
-        return
-    end
-    
-    local locationName = selected[1]
-    local success, msg = TeleportTo(locationName)
-    
-    if success then
-        Notify("Vechnost", "Teleported to " .. locationName, 2)
-    else
-        Notify("Vechnost", "Failed: " .. msg, 3)
+local TeleportDropdown = CreateDropdown("Teleport", "Select Island", GetTeleportLocationNames(), nil, function(selected)
+    if selected and selected ~= "(Scan locations first)" then
+        local success, msg = TeleportTo(selected)
+        Notify("Vechnost", success and msg or ("Failed: " .. msg), 2)
     end
 end)
 
 CreateButton("Teleport", "Refresh Locations", function()
     ScanIslands()
     TeleportDropdown:Refresh(GetTeleportLocationNames(), false)
-    TeleportStatusParagraph:Set({
-        Title = "Teleport Status",
-        Content = "Found " .. #TeleportLocations .. " locations"
-    })
     Notify("Vechnost", "Found " .. #TeleportLocations .. " locations", 2)
 end)
 
 CreateSection("Teleport", "Quick Teleport")
 
-CreateButton("Teleport", "Teleport to Spawn", function()
-    local character = LocalPlayer.Character
-    if character and character:FindFirstChild("HumanoidRootPart") then
-        local spawnFound = false
-        for _, loc in pairs(TeleportLocations) do
-            if string.find(string.lower(loc.Name), "spawn") or string.find(string.lower(loc.Name), "hub") or string.find(string.lower(loc.Name), "start") then
-                character.HumanoidRootPart.CFrame = loc.CFrame
-                Notify("Vechnost", "Teleported to " .. loc.Name, 2)
-                spawnFound = true
-                break
-            end
-        end
-        if not spawnFound then
-            local spawnLocation = Workspace:FindFirstChildOfClass("SpawnLocation")
-            if spawnLocation then
-                character.HumanoidRootPart.CFrame = spawnLocation.CFrame + Vector3.new(0, 5, 0)
-                Notify("Vechnost", "Teleported to Spawn", 2)
-            else
-                character.HumanoidRootPart.CFrame = CFrame.new(0, 50, 0)
-                Notify("Vechnost", "Teleported to Default Spawn", 2)
-            end
+CreateButton("Teleport", "TP to Spawn", function()
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        local spawn = Workspace:FindFirstChildOfClass("SpawnLocation")
+        if spawn then
+            char.HumanoidRootPart.CFrame = spawn.CFrame + Vector3.new(0, 5, 0)
+            Notify("Vechnost", "Teleported to Spawn", 2)
         end
     end
 end)
 
-CreateButton("Teleport", "Teleport to Nearest Player", function()
-    local character = LocalPlayer.Character
-    if not character or not character:FindFirstChild("HumanoidRootPart") then
-        Notify("Vechnost", "No character found!", 3)
-        return
-    end
+CreateButton("Teleport", "TP to Nearest Player", function()
+    local char = LocalPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     
-    local myPos = character.HumanoidRootPart.Position
-    local nearestPlayer = nil
-    local nearestDist = math.huge
+    local myPos = char.HumanoidRootPart.Position
+    local nearest, nearestDist = nil, math.huge
     
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local dist = (player.Character.HumanoidRootPart.Position - myPos).Magnitude
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local dist = (p.Character.HumanoidRootPart.Position - myPos).Magnitude
             if dist < nearestDist then
                 nearestDist = dist
-                nearestPlayer = player
+                nearest = p
             end
         end
     end
     
-    if nearestPlayer then
-        character.HumanoidRootPart.CFrame = nearestPlayer.Character.HumanoidRootPart.CFrame + Vector3.new(3, 0, 0)
-        Notify("Vechnost", "Teleported to " .. nearestPlayer.Name, 2)
+    if nearest then
+        char.HumanoidRootPart.CFrame = nearest.Character.HumanoidRootPart.CFrame + Vector3.new(3, 0, 0)
+        Notify("Vechnost", "Teleported to " .. nearest.Name, 2)
     else
-        Notify("Vechnost", "No players found!", 3)
+        Notify("Vechnost", "No players found", 2)
+    end
+end)
+
+-- ===== TRADING TAB =====
+CreateSection("Trading", "Select Target Player")
+
+local PlayerNames = {}
+for _, p in pairs(Players:GetPlayers()) do
+    if p ~= LocalPlayer then
+        table.insert(PlayerNames, p.Name)
+    end
+end
+if #PlayerNames == 0 then PlayerNames = {"(No players)"} end
+
+local PlayerDropdown = CreateDropdown("Trading", "Select Player", PlayerNames, nil, function(selected)
+    if selected and selected ~= "(No players)" then
+        TradeState.TargetPlayer = selected
+        Notify("Vechnost", "Target: " .. selected, 2)
+    end
+end)
+
+CreateButton("Trading", "Refresh Player List", function()
+    local list = {}
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(list, p.Name) end
+    end
+    if #list == 0 then list = {"(No players)"} end
+    PlayerDropdown:Refresh(list, false)
+    Notify("Vechnost", "Found " .. #list .. " players", 2)
+end)
+
+CreateSection("Trading", "Trade by Name")
+
+local TradeNameStatus = CreateParagraph("Trading", "Trade Status", "Ready")
+
+local ItemDropdown = CreateDropdown("Trading", "Select Item", {"(Load inventory)"}, nil, function(selected)
+    if selected and selected ~= "(Load inventory)" then
+        TradeState.ByName.ItemName = selected
+    end
+end)
+
+CreateButton("Trading", "Load Inventory", function()
+    LoadInventory()
+    local names = GetInventoryItemNames()
+    ItemDropdown:Refresh(names, false)
+    Notify("Vechnost", "Loaded " .. #names .. " items", 2)
+end)
+
+local TradeAmountBuffer = "1"
+CreateInput("Trading", "Amount", "1", function(text)
+    TradeAmountBuffer = text
+    local n = tonumber(text)
+    if n and n > 0 then TradeState.ByName.Amount = math.floor(n) end
+end)
+
+local TradeByNameToggle = CreateToggle("Trading", "Start Trade", false, function(v)
+    if v then
+        if not TradeState.TargetPlayer then
+            Notify("Vechnost", "Select target first!", 3)
+            TradeByNameToggle:SetValue(false)
+            return
+        end
+        if not TradeState.ByName.ItemName then
+            Notify("Vechnost", "Select item first!", 3)
+            TradeByNameToggle:SetValue(false)
+            return
+        end
+        
+        TradeState.ByName.Active = true
+        TradeState.ByName.Sent = 0
+        
+        task.spawn(function()
+            local total = TradeState.ByName.Amount
+            local itemName = TradeState.ByName.ItemName
+            local target = TradeState.TargetPlayer
+            
+            for i = 1, total do
+                if not TradeState.ByName.Active then break end
+                
+                TradeNameStatus:Set({
+                    Title = "Trade Status",
+                    Content = string.format("Sending: %d/%d %s", i, total, itemName)
+                })
+                
+                FireTradeItem(target, itemName, 1)
+                TradeState.ByName.Sent = i
+                task.wait(0.5)
+            end
+            
+            TradeState.ByName.Active = false
+            TradeByNameToggle:SetValue(false)
+            TradeNameStatus:Set({
+                Title = "Trade Status",
+                Content = string.format("Done: %d/%d sent", TradeState.ByName.Sent, total)
+            })
+            Notify("Vechnost", "Trade complete!", 2)
+        end)
+    else
+        TradeState.ByName.Active = false
+    end
+end)
+
+CreateSection("Trading", "Trade by Rarity")
+
+local RarityDropdown = CreateDropdown("Trading", "Select Rarity", RarityList, nil, function(selected)
+    if selected then
+        TradeState.ByRarity.Rarity = selected
+        TradeState.ByRarity.RarityTier = RARITY_NAME_TO_TIER[selected]
+        Notify("Vechnost", "Selected: " .. selected, 2)
+    end
+end)
+
+CreateSection("Trading", "Trade Stone")
+
+local StoneDropdown = CreateDropdown("Trading", "Select Stone", STONE_LIST, nil, function(selected)
+    if selected then
+        TradeState.ByStone.StoneName = selected
+    end
+end)
+
+-- ===== SHOP TAB =====
+CreateSection("Shop", "Auto Buy Charm")
+
+local CharmDropdown = CreateDropdown("Shop", "Select Charm", ShopDB.Charms, nil, function(selected)
+    ShopSettings.SelectedCharm = selected
+end)
+
+CreateToggle("Shop", "Auto Buy Charm", false, function(v)
+    ShopSettings.AutoBuyCharm = v
+    if v and ShopSettings.SelectedCharm then
+        task.spawn(function()
+            while ShopSettings.AutoBuyCharm do
+                BuyShopItem("Charm", ShopSettings.SelectedCharm)
+                task.wait(1)
+            end
+        end)
+    end
+    Notify("Vechnost", v and "Auto Buy Charm ON" or "Auto Buy Charm OFF", 2)
+end)
+
+CreateSection("Shop", "Auto Buy Weather")
+
+local WeatherDropdown = CreateDropdown("Shop", "Select Weather", ShopDB.Weather, nil, function(selected)
+    ShopSettings.SelectedWeather = selected
+end)
+
+CreateToggle("Shop", "Auto Buy Weather", false, function(v)
+    ShopSettings.AutoBuyWeather = v
+    if v and ShopSettings.SelectedWeather then
+        BuyShopItem("Weather", ShopSettings.SelectedWeather)
+    end
+    Notify("Vechnost", v and "Weather changed!" or "Auto Buy Weather OFF", 2)
+end)
+
+CreateSection("Shop", "Auto Buy Bait")
+
+local BaitDropdown = CreateDropdown("Shop", "Select Bait", ShopDB.Bait, nil, function(selected)
+    ShopSettings.SelectedBait = selected
+end)
+
+CreateToggle("Shop", "Auto Buy Bait", false, function(v)
+    ShopSettings.AutoBuyBait = v
+    if v and ShopSettings.SelectedBait then
+        task.spawn(function()
+            while ShopSettings.AutoBuyBait do
+                BuyShopItem("Bait", ShopSettings.SelectedBait)
+                task.wait(2)
+            end
+        end)
+    end
+    Notify("Vechnost", v and "Auto Buy Bait ON" or "Auto Buy Bait OFF", 2)
+end)
+
+CreateSection("Shop", "Merchant Shop")
+
+local MerchantDropdown = CreateDropdown("Shop", "Select Item", ShopDB.Merchant, nil, function(selected)
+    -- Item selected
+end)
+
+CreateButton("Shop", "Buy Selected Item", function()
+    local selected = MerchantDropdown:GetValue()
+    if selected then
+        BuyShopItem("Merchant", selected)
+        Notify("Vechnost", "Purchased: " .. selected, 2)
+    else
+        Notify("Vechnost", "Select item first!", 2)
     end
 end)
 
 -- ===== WEBHOOK TAB =====
 CreateSection("Webhook", "Rarity Filter")
 
-local WebhookRarityDropdown = CreateDropdown("Webhook", "Filter by Rarity", RarityList, {}, true, function(selected)
-    Settings.SelectedRarities = {}
-    for _, value in ipairs(selected) do
-        local tier = RARITY_NAME_TO_TIER[value]
+local WebhookRarityDropdown = CreateDropdown("Webhook", "Filter Rarity", RarityList, nil, function(selected)
+    if selected then
+        Settings.SelectedRarities = {}
+        local tier = RARITY_NAME_TO_TIER[selected]
         if tier then Settings.SelectedRarities[tier] = true end
-    end
-
-    if next(Settings.SelectedRarities) == nil then
-        Notify("Vechnost", "Filter: Semua rarity", 2)
-    else
-        Notify("Vechnost", "Filter rarity diperbarui", 2)
+        Notify("Vechnost", "Filter: " .. selected, 2)
     end
 end)
 
-CreateSection("Webhook", "Setup Webhook")
+CreateButton("Webhook", "Clear Filter (All Rarity)", function()
+    Settings.SelectedRarities = {}
+    WebhookRarityDropdown:SetValue(nil)
+    Notify("Vechnost", "Filter cleared - All rarities", 2)
+end)
+
+CreateSection("Webhook", "Setup")
 
 local WebhookUrlBuffer = ""
-
-local WebhookUrlInput = CreateInput("Webhook", "Discord Webhook URL", "https://discord.com/api/webhooks/...", function(text)
+CreateInput("Webhook", "Discord Webhook URL", "https://discord.com/api/webhooks/...", function(text)
     WebhookUrlBuffer = text
 end)
 
 CreateButton("Webhook", "Save Webhook URL", function()
     local url = WebhookUrlBuffer:gsub("%s+", "")
-
-    if not url:match("^https://discord.com/api/webhooks/")
-    and not url:match("^https://canary.discord.com/api/webhooks/") then
-        Notify("Vechnost", "URL webhook tidak valid!", 3)
+    if not url:match("^https://discord.com/api/webhooks/") and not url:match("^https://canary.discord.com/api/webhooks/") then
+        Notify("Vechnost", "Invalid webhook URL!", 3)
         return
     end
-
     Settings.Url = url
     Notify("Vechnost", "Webhook URL saved!", 2)
 end)
 
-CreateSection("Webhook", "Logger Mode")
+CreateSection("Webhook", "Mode")
 
-local ServerModeToggle = CreateToggle("Webhook", "Server-Notifier Mode", true, function(value)
-    Settings.ServerWide = value
-    Notify("Vechnost", value and "Mode: Seluruh Server" or "Mode: Hanya Lokal", 2)
+CreateToggle("Webhook", "Server-Wide Mode", true, function(v)
+    Settings.ServerWide = v
+    Notify("Vechnost", v and "Mode: Server-Wide" or "Mode: Local Only", 2)
 end)
 
 CreateSection("Webhook", "Control")
 
-local WebhookEnabledToggle = CreateToggle("Webhook", "Enable Webhook Logger", false, function(value)
-    if value then
+local WebhookToggle = CreateToggle("Webhook", "Enable Logger", false, function(v)
+    if v then
         if Settings.Url == "" then
-            Notify("Vechnost", "Isi webhook URL dulu!", 3)
-            WebhookEnabledToggle:SetValue(false)
+            Notify("Vechnost", "Set webhook URL first!", 3)
+            WebhookToggle:SetValue(false)
             return
         end
         local success, msg = StartLogger()
         if success then
-            Notify("Vechnost", "Notifier Aktif!", 2)
+            Notify("Vechnost", "Logger started!", 2)
         else
-            Notify("Vechnost", msg or "Error starting logger", 3)
-            WebhookEnabledToggle:SetValue(false)
+            Notify("Vechnost", msg, 3)
+            WebhookToggle:SetValue(false)
         end
     else
         StopLogger()
-        Notify("Vechnost", "Notifier Berhenti", 2)
+        Notify("Vechnost", "Logger stopped", 2)
     end
 end)
 
 CreateSection("Webhook", "Status")
 
-local WebhookStatusParagraph = CreateParagraph("Webhook", "Notifier Status", "Status: Offline")
+local WebhookStatus = CreateParagraph("Webhook", "Logger Status", "Offline")
 
 task.spawn(function()
     while task.wait(2) do
         if Settings.Active then
-            WebhookStatusParagraph:Set({
-                Title = "Notifier Status",
-                Content = string.format("Status: Aktif | Mode: %s | Total Log: %d ikan",
-                    Settings.ServerWide and "Server-Notifier" or "Local Only",
-                    Settings.LogCount
-                )
+            WebhookStatus:Set({
+                Title = "Logger Status",
+                Content = string.format("Active | Mode: %s | Logged: %d",
+                    Settings.ServerWide and "Server-Wide" or "Local",
+                    Settings.LogCount)
             })
         else
-            WebhookStatusParagraph:Set({
-                Title = "Notifier Status",
-                Content = "Status: Offline"
-            })
+            WebhookStatus:Set({ Title = "Logger Status", Content = "Offline" })
         end
     end
 end)
@@ -2437,21 +2055,33 @@ CreateSection("Setting", "Testing")
 
 CreateButton("Setting", "Test Webhook", function()
     if Settings.Url == "" then
-        Notify("Vechnost", "Isi webhook URL dulu!", 3)
+        Notify("Vechnost", "Set webhook URL first!", 3)
         return
     end
-
-    task.spawn(function()
-        SendWebhook(BuildTestPayload(LocalPlayer.Name))
-    end)
-
-    Notify("Vechnost", "Test message terkirim!", 2)
+    
+    SendWebhook({
+        username = "Vechnost Notifier",
+        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+        flags = 32768,
+        components = {{
+            type = 17,
+            accent_color = 0x5865f2,
+            components = {
+                { type = 10, content = "**Test Message**" },
+                { type = 14, spacing = 1, divider = true },
+                { type = 10, content = "Webhook is working!\n\n- **Sent by:** " .. LocalPlayer.Name },
+                { type = 10, content = "-# " .. os.date("!%B %d, %Y") }
+            }
+        }}
+    })
+    
+    Notify("Vechnost", "Test message sent!", 2)
 end)
 
-CreateButton("Setting", "Reset Log Counter", function()
+CreateButton("Setting", "Reset Counter", function()
     Settings.LogCount = 0
     Settings.SentUUID = {}
-    Notify("Vechnost", "Counter di-reset!", 2)
+    Notify("Vechnost", "Counter reset!", 2)
 end)
 
 CreateSection("Setting", "UI")
@@ -2461,13 +2091,13 @@ CreateButton("Setting", "Toggle UI (Press V)", function()
 end)
 
 CreateSection("Setting", "Credits")
-
-CreateParagraph("Setting", "Vechnost Team", "Terima kasih telah menggunakan Vechnost!\nDiscord: discord.gg/vechnost")
+CreateParagraph("Setting", "Vechnost Team", "Thanks for using Vechnost!\nDiscord: discord.gg/vechnost")
 
 -- =====================================================
--- BAGIAN 17: UI CONTROLS (Drag, Close, Minimize)
+-- BAGIAN 21: UI CONTROLS
 -- =====================================================
 
+-- Drag
 local dragging = false
 local dragOffset = Vector2.zero
 
@@ -2491,39 +2121,32 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- Close
 CloseBtn.MouseEnter:Connect(function()
     TweenService:Create(CloseBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Error}):Play()
 end)
-
 CloseBtn.MouseLeave:Connect(function()
     TweenService:Create(CloseBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItem}):Play()
 end)
-
 CloseBtn.MouseButton1Click:Connect(function()
-    TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}):Play()
-    task.wait(0.3)
     ScreenGui:Destroy()
 end)
 
+-- Minimize
 local isMinimized = false
-
 MinBtn.MouseEnter:Connect(function()
     TweenService:Create(MinBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItemHover}):Play()
 end)
-
 MinBtn.MouseLeave:Connect(function()
     TweenService:Create(MinBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.ContentItem}):Play()
 end)
-
 MinBtn.MouseButton1Click:Connect(function()
     isMinimized = not isMinimized
-    if isMinimized then
-        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 680, 0, 45)}):Play()
-    else
-        TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = UDim2.new(0, 680, 0, 450)}):Play()
-    end
+    local targetSize = isMinimized and UDim2.new(0, 720, 0, 45) or UDim2.new(0, 720, 0, 480)
+    TweenService:Create(MainFrame, TweenInfo.new(0.3), {Size = targetSize}):Play()
 end)
 
+-- Keyboard toggle
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.V then
@@ -2532,7 +2155,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- =====================================================
--- BAGIAN 18: FLOATING TOGGLE BUTTON (Mobile)
+-- BAGIAN 22: MOBILE BUTTON
 -- =====================================================
 local oldBtn = CoreGui:FindFirstChild(GUI_NAMES.Mobile)
 if oldBtn then oldBtn:Destroy() end
@@ -2547,12 +2170,8 @@ FloatButton.Size = UDim2.fromOffset(52, 52)
 FloatButton.Position = UDim2.fromScale(0.05, 0.5)
 FloatButton.BackgroundTransparency = 1
 FloatButton.AutoButtonColor = false
-FloatButton.BorderSizePixel = 0
 FloatButton.Image = "rbxassetid://127239715511367"
-FloatButton.ImageTransparency = 0
-FloatButton.ScaleType = Enum.ScaleType.Fit
 FloatButton.Parent = BtnGui
-
 Instance.new("UICorner", FloatButton).CornerRadius = UDim.new(1, 0)
 
 FloatButton.MouseButton1Click:Connect(function()
@@ -2580,18 +2199,17 @@ RunService.RenderStepped:Connect(function()
     local target = mouse - floatDragOffset
     local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
     local sz = FloatButton.AbsoluteSize
-    local cx = math.clamp(target.X, 0, vp.X - sz.X)
-    local cy = math.clamp(target.Y, 0, vp.Y - sz.Y)
-    FloatButton.Position = UDim2.fromOffset(cx, cy)
+    FloatButton.Position = UDim2.fromOffset(
+        math.clamp(target.X, 0, vp.X - sz.X),
+        math.clamp(target.Y, 0, vp.Y - sz.Y)
+    )
 end)
 
 -- =====================================================
--- BAGIAN 19: INIT
+-- BAGIAN 23: INIT
 -- =====================================================
-
 SwitchTab("Info")
 
-warn("[Vechnost] Custom UI v2.0 Loaded!")
-warn("[Vechnost] Toggle GUI: Press V or tap floating button")
-warn("[Vechnost] Found", #TeleportLocations, "teleport locations")
+warn("[Vechnost] v2.5.0 Loaded!")
+warn("[Vechnost] Toggle: Press V or tap floating button")
 Notify("Vechnost", "Script loaded successfully!", 3)
