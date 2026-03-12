@@ -1,37 +1,33 @@
 --[[
-    FILE: vechnost_rayfield.lua
+    FILE: vechnost_v2_rayfield.lua
     BRAND: Vechnost
-    VERSION: 2.5.2 (Rayfield Edition)
-    UI: Rayfield Library
-    BAC: Zero background loops saat idle, No RunService connections
+    VERSION: 2.5.2 (BAC-4226 Fixed) - RAYFIELD EDITION
+    
+    FIX LOG v2.5.2 - ROOT CAUSE BAC-4226:
+    -----------------------------------------------
+    [CRITICAL] Hapus RunService.RenderStepped - BAC detect koneksi per-frame dari injected script
+    [CRITICAL] Hapus SEMUA background task.spawn loop saat idle - loop fishing/stats/webhook
+               sekarang hanya jalan saat fitur aktif, berhenti otomatis saat toggle OFF
+    [FIX] Anti-AFK menggunakan VirtualUser:ClickButton2 interval 4-6 menit, tanpa getconnections
+    [FIX] Semua loop automation berhenti total ketika toggle dimatikan
+    -----------------------------------------------
 ]]
 
--- ============================================================
--- SECTION 1: LOAD RAYFIELD
--- ============================================================
-local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- ============================================================
--- SECTION 2: SERVICES
+-- SECTION 1: SERVICES
 -- ============================================================
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService       = game:GetService("HttpService")
-local VirtualUser       = game:GetService("VirtualUser")
+local Players            = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local HttpService        = game:GetService("HttpService")
+local UserInputService   = game:GetService("UserInputService")
+local VirtualUser        = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 
 -- ============================================================
--- SECTION 3: HTTP REQUEST (executor compat)
--- ============================================================
-local HttpRequest = syn and syn.request
-    or (typeof(http_request) == "function" and http_request)
-    or (typeof(request) == "function" and request)
-    or (fluxus and fluxus.request)
-    or nil
-
--- ============================================================
--- SECTION 4: GAME REMOTES
+-- SECTION 2: GAME REMOTES
 -- ============================================================
 local net, ObtainedNewFish
 pcall(function()
@@ -44,7 +40,16 @@ pcall(function()
 end)
 
 -- ============================================================
--- SECTION 5: FISH DATABASE
+-- SECTION 3: HTTP REQUEST
+-- ============================================================
+local HttpRequest = syn and syn.request
+    or (typeof(http_request) == "function" and http_request)
+    or (typeof(request) == "function" and request)
+    or (fluxus and fluxus.request)
+    or nil
+
+-- ============================================================
+-- SECTION 4: FISH DATABASE
 -- ============================================================
 local FishDB = {}
 pcall(function()
@@ -74,7 +79,7 @@ for id, d in pairs(FishDB) do
 end
 
 -- ============================================================
--- SECTION 6: PLAYER DATA (Replion)
+-- SECTION 5: PLAYER DATA (Replion)
 -- ============================================================
 local PlayerData
 pcall(function()
@@ -106,7 +111,7 @@ local function GetStats()
         if inv and type(inv)=="table" then
             local items = inv.Items or inv
             if type(items)=="table" then
-                local cnt = 0; for _ in pairs(items) do cnt=cnt+1 end
+                local cnt=0; for _ in pairs(items) do cnt=cnt+1 end
                 r.BPCount = cnt
             end
             r.BPMax = inv.Capacity or inv.Size or inv.Max or 100
@@ -116,14 +121,15 @@ local function GetStats()
 end
 
 -- ============================================================
--- SECTION 7: RARITY & CONSTANTS
+-- SECTION 6: RARITY & CONSTANTS
 -- ============================================================
-local RARITY_MAP  = {[1]="Common",[2]="Uncommon",[3]="Rare",[4]="Epic",[5]="Legendary",[6]="Mythic",[7]="Secret"}
+local RARITY_MAP = {[1]="Common",[2]="Uncommon",[3]="Rare",[4]="Epic",
+                    [5]="Legendary",[6]="Mythic",[7]="Secret"}
 local RARITY_TIER = {Common=1,Uncommon=2,Rare=3,Epic=4,Legendary=5,Mythic=6,Secret=7}
 local RARITY_LIST = {"Common","Uncommon","Rare","Epic","Legendary","Mythic","Secret"}
 
 -- ============================================================
--- SECTION 8: ISLAND DATA
+-- SECTION 7: ISLAND DATA
 -- ============================================================
 local ISLANDS = {
     {Name="Fisherman Island",   KW={"fisherman","starter","spawn","hub","main"}},
@@ -161,10 +167,8 @@ local function ScanIslands()
                     end
                     if pos then
                         local found = false
-                        for _, l in ipairs(TeleportLocations) do if l.Name==obj.Name then found=true; break end end
-                        if not found then
-                            table.insert(TeleportLocations, {Name=obj.Name, CFrame=CFrame.new(pos+Vector3.new(0,5,0))})
-                        end
+                        for _, l in ipairs(TeleportLocations) do if l.Name == obj.Name then found=true; break end end
+                        if not found then table.insert(TeleportLocations, {Name = obj.Name, CFrame = CFrame.new(pos + Vector3.new(0,5,0))}) end
                     end
                 end
             end
@@ -176,14 +180,12 @@ local function ScanIslands()
                     for _, kw in ipairs(island.KW) do
                         if lname:find(kw, 1, true) then
                             local found = false
-                            for _, l in ipairs(TeleportLocations) do if l.Name==island.Name then found=true; break end end
+                            for _, l in ipairs(TeleportLocations) do if l.Name == island.Name then found=true; break end end
                             if not found then
                                 local pos
                                 if obj:IsA("BasePart") then pos = obj.Position
                                 elseif obj:IsA("Model") and obj.PrimaryPart then pos = obj.PrimaryPart.Position end
-                                if pos then
-                                    table.insert(TeleportLocations, {Name=island.Name, CFrame=CFrame.new(pos+Vector3.new(0,5,0))})
-                                end
+                                if pos then table.insert(TeleportLocations, {Name = island.Name, CFrame = CFrame.new(pos + Vector3.new(0,5,0))}) end
                             end
                             break
                         end
@@ -196,10 +198,8 @@ local function ScanIslands()
         local sp = game:GetService("Workspace"):FindFirstChildOfClass("SpawnLocation")
         if sp then
             local found = false
-            for _, l in ipairs(TeleportLocations) do if l.Name=="Fisherman Island" then found=true; break end end
-            if not found then
-                table.insert(TeleportLocations, {Name="Fisherman Island", CFrame=sp.CFrame+Vector3.new(0,5,0)})
-            end
+            for _, l in ipairs(TeleportLocations) do if l.Name == "Fisherman Island" then found=true; break end end
+            if not found then table.insert(TeleportLocations, {Name = "Fisherman Island", CFrame = sp.CFrame + Vector3.new(0,5,0)}) end
         end
     end)
     table.sort(TeleportLocations, function(a,b) return a.Name < b.Name end)
@@ -211,24 +211,29 @@ local function TeleportTo(name)
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return false, "No HRP" end
     for _, l in ipairs(TeleportLocations) do
-        if l.Name == name then hrp.CFrame = l.CFrame; return true, "Teleported to "..name end
+        if l.Name == name then
+            hrp.CFrame = l.CFrame
+            return true, "Teleported to " .. name
+        end
     end
     return false, "Location not found"
 end
 
 local function GetLocNames()
-    if #TeleportLocations == 0 then return {"(Scan dulu)"} end
+    if #TeleportLocations == 0 then return {"(Klik Scan dulu)"} end
     local t = {}
     for _, l in ipairs(TeleportLocations) do table.insert(t, l.Name) end
     return t
 end
 
 -- ============================================================
--- SECTION 9: SHOP DATA
+-- SECTION 8: SHOP DATA
 -- ============================================================
 local SHOP = {
-    Bait     = {"Basic Bait","Worm","Minnow","Shrimp","Sandworm","Firefly","Glowbait","Premium Bait","Lava Bait","Deep Sea Bait","Ancient Bait","Mythic Bait"},
-    Rod      = {"Basic Rod","Copper Rod","Iron Rod","Gold Rod","Crystal Rod","Lava Rod","Ocean Rod","Ancient Rod","Mythic Rod","Secret Rod"},
+    Bait     = {"Basic Bait","Worm","Minnow","Shrimp","Sandworm","Firefly",
+                "Glowbait","Premium Bait","Lava Bait","Deep Sea Bait","Ancient Bait","Mythic Bait"},
+    Rod      = {"Basic Rod","Copper Rod","Iron Rod","Gold Rod","Crystal Rod",
+                "Lava Rod","Ocean Rod","Ancient Rod","Mythic Rod","Secret Rod"},
     Boat     = {"Basic Boat","Wooden Boat","Speed Boat","Ocean Vessel","Dive Boat"},
     Merchant = {"Enchant Stone","Evolved Stone","Luck Potion","Mutation Potion","XP Boost","Coin Boost"},
     Weather  = {"Sunny","Rainy","Stormy","Foggy","Snowy","Blood Moon","Aurora"},
@@ -257,7 +262,8 @@ local function BuyItem(category, itemName)
     }
     local remote = FindRemoteByPatterns(patterns[category] or {})
     if not remote then return false end
-    task.delay(math.random(50,150)/1000, function()
+    local jitter = math.random(50,150)/1000
+    task.delay(jitter, function()
         pcall(function()
             if remote:IsA("RemoteEvent") then remote:FireServer(itemName)
             else remote:InvokeServer(itemName) end
@@ -267,31 +273,31 @@ local function BuyItem(category, itemName)
 end
 
 -- ============================================================
--- SECTION 10: FISHING REMOTES & STATE MACHINE
+-- SECTION 9: FISHING REMOTES & STATE
 -- ============================================================
 local FR = {}
-
 local function FindFishingRemotes()
     FR = {}
     if not net then return end
     for _, child in ipairs(net:GetDescendants()) do
         if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
             local ln = child.Name:lower()
-            if not FR.Cast  and (ln:find("cast") or ln:find("throw"))                         then FR.Cast  = child
-            elseif not FR.Reel  and (ln:find("reel") or ln:find("pull") or ln:find("catch"))  then FR.Reel  = child
-            elseif not FR.Shake and (ln:find("shake") or ln:find("struggle") or ln:find("mash")) then FR.Shake = child
-            elseif not FR.Sell  and  ln:find("sell")                                           then FR.Sell  = child end
+            if not FR.Cast  and (ln:find("cast")  or ln:find("throw")) then FR.Cast  = child
+            elseif not FR.Reel  and (ln:find("reel")  or ln:find("pull") or ln:find("catch")) then FR.Reel  = child
+            elseif not FR.Shake and (ln:find("shake") or ln:find("struggle") or ln:find("mash"))  then FR.Shake = child
+            elseif not FR.Sell  and  ln:find("sell")  then FR.Sell  = child end
         end
     end
 end
 FindFishingRemotes()
 
-local FS = {AutoCast=false, AutoReel=false, AutoShake=false, AutoSell=false, AntiAFK=false}
-
+local FS = { AutoCast = false, AutoReel = false, AutoShake = false, AutoSell = false, AntiAFK = false }
 local RemoteCD = {}
 local function RateOK(key, interval)
     local now = tick()
-    if (now - (RemoteCD[key] or 0)) >= interval then RemoteCD[key]=now; return true end
+    if (now - (RemoteCD[key] or 0)) >= interval then
+        RemoteCD[key] = now; return true
+    end
     return false
 end
 
@@ -313,7 +319,9 @@ local function GuiHasName(patterns)
     for _, d in ipairs(pg:GetDescendants()) do
         if d:IsA("GuiObject") and d.Visible then
             local ln = d.Name:lower()
-            for _, p in ipairs(patterns) do if ln:find(p,1,true) then return true end end
+            for _, p in ipairs(patterns) do
+                if ln:find(p, 1, true) then return true end
+            end
         end
     end
     return false
@@ -321,43 +329,42 @@ end
 local function IsBiting()  return GuiHasName({"bite","reel","catch","pull","!"}) end
 local function IsShaking() return GuiHasName({"shake","struggle","mash","minigame","click"}) end
 
-local FState = {s="Idle", lastCast=0, castCD=4}
+local FState = { s = "Idle", lastCast = 0, castCD = 4, lastSell = 0 }
 local fishThread = nil
 
-local function AnyFishingActive()
-    return FS.AutoCast or FS.AutoReel or FS.AutoShake or FS.AutoSell
-end
+local function AnyFishingActive() return FS.AutoCast or FS.AutoReel or FS.AutoShake or FS.AutoSell end
+
 local function StopFishingThread()
-    if fishThread then task.cancel(fishThread); fishThread=nil end
+    if fishThread then task.cancel(fishThread); fishThread = nil end
     FState.s = "Idle"
 end
+
 local function StartFishingThread()
     if fishThread then return end
     fishThread = task.spawn(function()
         while AnyFishingActive() do
-            task.wait(math.random(90,170)/1000)
+            task.wait(math.random(90, 170) / 1000)
 
             if FS.AutoCast and FR.Cast then
                 local now = tick()
-                if FState.s=="Idle" and (now-FState.lastCast)>=FState.castCD and not IsBiting() and not IsShaking() then
-                    FState.s="Casting"; FState.lastCast=now
-                    FState.castCD=math.random(350,700)/100
-                    SafeFire(FR.Cast,"cast",0.5)
-                    task.delay(math.random(30,80)/100, function()
-                        if FState.s=="Casting" then FState.s="Waiting" end
-                    end)
+                if FState.s == "Idle" and (now - FState.lastCast) >= FState.castCD and not IsBiting() and not IsShaking() then
+                    FState.s = "Casting"
+                    FState.lastCast = now
+                    FState.castCD  = math.random(350, 700) / 100
+                    SafeFire(FR.Cast, "cast", 0.5)
+                    task.delay(math.random(30,80)/100, function() if FState.s == "Casting" then FState.s = "Waiting" end end)
                 end
             end
 
             if FS.AutoReel and FR.Reel then
-                if (FState.s=="Waiting" or FState.s=="Idle") and IsBiting() then
-                    FState.s="Biting"
-                    task.delay(math.random(25,85)/100, function()
-                        if FState.s=="Biting" then
-                            FState.s="Reeling"
-                            SafeFire(FR.Reel,"reel",0.3)
+                if (FState.s == "Waiting" or FState.s == "Idle") and IsBiting() then
+                    FState.s = "Biting"
+                    task.delay(math.random(25, 85) / 100, function()
+                        if FState.s == "Biting" then
+                            FState.s = "Reeling"
+                            SafeFire(FR.Reel, "reel", 0.3)
                             task.delay(math.random(6,16)/10, function()
-                                if FState.s=="Reeling" and not IsShaking() then FState.s="Idle" end
+                                if FState.s == "Reeling" and not IsShaking() then FState.s = "Idle" end
                             end)
                         end
                     end)
@@ -366,170 +373,115 @@ local function StartFishingThread()
 
             if FS.AutoShake and FR.Shake then
                 if IsShaking() then
-                    if FState.s~="Shaking" then FState.s="Shaking" end
-                    SafeFire(FR.Shake,"shake",1/math.random(8,14))
+                    if FState.s ~= "Shaking" then FState.s = "Shaking" end
+                    SafeFire(FR.Shake, "shake", 1/math.random(8, 14))
                 else
-                    if FState.s=="Shaking" then
-                        FState.s="Idle"
-                        FState.lastCast=tick()-FState.castCD+math.random(10,20)/10
+                    if FState.s == "Shaking" then
+                        FState.s = "Idle"
+                        FState.lastCast = tick() - FState.castCD + math.random(10,20)/10
                     end
                 end
             end
 
             if FS.AutoSell and FR.Sell then
-                if RateOK("sell_global", math.random(8,12)) then
-                    SafeFire(FR.Sell,"sell",0.5,"All")
-                end
+                if RateOK("sell_global", math.random(8,12)) then SafeFire(FR.Sell, "sell", 0.5, "All") end
             end
         end
         fishThread = nil
     end)
 end
 
-local function SetFishing(key, val)
+local function SetFishingFeature(key, val)
     FS[key] = val
-    if val then StartFishingThread()
-    elseif not AnyFishingActive() then StopFishingThread() end
+    if val then StartFishingThread() elseif not AnyFishingActive() then StopFishingThread() end
 end
 
 -- ============================================================
--- SECTION 11: ANTI-AFK
+-- SECTION 10: ANTI-AFK
 -- ============================================================
 local afkThread = nil
 local function StartAntiAFK()
     if afkThread then return end
     afkThread = task.spawn(function()
         while FS.AntiAFK do
-            task.wait(math.random(240,360))
-            if FS.AntiAFK then
-                pcall(function()
-                    VirtualUser:ClickButton2(Vector2.new(math.random(50,400),math.random(50,400)))
-                end)
-            end
+            task.wait(math.random(240, 360))
+            if FS.AntiAFK then pcall(function() VirtualUser:ClickButton2(Vector2.new(math.random(50, 400), math.random(50, 400))) end) end
         end
         afkThread = nil
     end)
 end
-local function StopAntiAFK()
-    FS.AntiAFK=false
-    if afkThread then task.cancel(afkThread); afkThread=nil end
-end
+local function StopAntiAFK() FS.AntiAFK = false; if afkThread then task.cancel(afkThread); afkThread = nil end end
 
 -- ============================================================
--- SECTION 12: WEBHOOK & LOGGER
+-- SECTION 11: WEBHOOK & LOGGER
 -- ============================================================
-local WH = {Active=false, Url="", SentUUID={}, Rarities={}, ServerWide=true, Count=0}
-local IconCache = {}
-local LogConns  = {}
+local WH = { Active=false, Url="", SentUUID={}, Rarities={}, ServerWide=true, Count=0 }
+local IconCache, LogConns = {}, {}
 
 local function FetchIcon(fishId, cb)
-    if IconCache[fishId]~=nil then cb(IconCache[fishId]); return end
+    if IconCache[fishId] ~= nil then cb(IconCache[fishId]); return end
     task.spawn(function()
         local fish = FishDB[fishId]
         if not fish or not fish.Icon then IconCache[fishId]=""; cb(""); return end
         local aid = tostring(fish.Icon):match("%d+")
         if not aid then IconCache[fishId]=""; cb(""); return end
-        local ok, res = pcall(function()
-            return HttpRequest({
-                Url    = "https://thumbnails.roblox.com/v1/assets?assetIds="..aid.."&size=420x420&format=Png",
-                Method = "GET",
-            })
-        end)
+        local ok, res = pcall(function() return HttpRequest({Url="https://thumbnails.roblox.com/v1/assets?assetIds="..aid.."&size=420x420&format=Png", Method="GET"}) end)
         if ok and res and res.Body then
             local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
-            if ok2 and data and data.data and data.data[1] then
-                IconCache[fishId] = data.data[1].imageUrl or ""
-            end
+            if ok2 and data and data.data and data.data[1] then IconCache[fishId] = data.data[1].imageUrl or "" end
         end
         IconCache[fishId] = IconCache[fishId] or ""
         cb(IconCache[fishId])
     end)
 end
 
-local function RarityOK(fishId)
-    local fish = FishDB[fishId]
-    if not fish then return false end
-    if not next(WH.Rarities) then return true end
-    return WH.Rarities[fish.Tier] == true
-end
-
 local function BuildPayload(pname, fishId, weight, mutation)
     local fish = FishDB[fishId]
     if not fish then return nil end
     local rname = RARITY_MAP[fish.Tier] or "Unknown"
-    local icon  = IconCache[fishId] or ""
+    local icon = IconCache[fishId] or ""
     return {
-        username   = "Vechnost Notifier",
-        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-        flags      = 32768,
-        components = {{
-            type       = 17,
-            components = {
-                {type=10, content="# NEW FISH CAUGHT!"},
-                {type=14, spacing=1, divider=true},
-                {type=10, content="__@"..pname.." caught **"..rname:upper().."** fish__"},
-                {type=9,  components={{type=10,content="**Fish**"},{type=10,content="> "..fish.Name}},
-                          accessory=icon~="" and {type=11,media={url=icon}} or nil},
-                {type=10, content="**Rarity:** "..rname},
-                {type=10, content="**Weight:** "..string.format("%.1fkg",weight or 0)},
-                {type=10, content="**Mutation:** "..(mutation or "None")},
-                {type=14, spacing=1, divider=true},
-                {type=10, content="-# "..os.date("!%B %d, %Y")},
-            },
-        }},
+        username="Vechnost Notifier", avatar_url="https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png", flags=32768,
+        components={{type=17,components={
+            {type=10, content="# NEW FISH CAUGHT!"},
+            {type=14, spacing=1, divider=true},
+            {type=10, content="__@"..pname.." caught **"..rname:upper().."** fish__"},
+            {type=9, components={{type=10,content="**Fish**"},{type=10,content="> "..fish.Name}}, accessory=icon~="" and {type=11,media={url=icon}} or nil},
+            {type=10, content="**Rarity:** "..rname}, {type=10, content="**Weight:** "..string.format("%.1fkg", weight or 0)}, {type=10, content="**Mutation:** "..(mutation or "None")},
+            {type=14, spacing=1, divider=true}, {type=10, content="-# "..os.date("!%B %d, %Y")}
+        }}},
     }
 end
 
 local function SendWH(payload)
-    if WH.Url=="" or not HttpRequest or not payload then return end
-    pcall(function()
-        local url = WH.Url..(WH.Url:find("?") and "&" or "?").."with_components=true"
-        HttpRequest({Url=url, Method="POST",
-            Headers={["Content-Type"]="application/json"},
-            Body=HttpService:JSONEncode(payload)})
-    end)
+    if WH.Url == "" or not HttpRequest or not payload then return end
+    pcall(function() HttpRequest({Url=WH.Url.."?with_components=true", Method="POST", Headers={["Content-Type"]="application/json"}, Body=HttpService:JSONEncode(payload)}) end)
 end
 
 local function OnFishCaught(pArg, wData, wrapper)
     if not WH.Active then return end
     local item = (wrapper and wrapper.InventoryItem) or (wData and wData.InventoryItem)
-    if not item or not item.Id or not item.UUID then return end
-    if not FishDB[item.Id] then return end
-    if not RarityOK(item.Id) then return end
-    if WH.SentUUID[item.UUID] then return end
+    if not item or not item.Id or not item.UUID or not FishDB[item.Id] or not (not next(WH.Rarities) or WH.Rarities[FishDB[item.Id].Tier]) or WH.SentUUID[item.UUID] then return end
     WH.SentUUID[item.UUID] = true
-    local pname = LocalPlayer.Name
-    if typeof(pArg)=="Instance" and pArg:IsA("Player") then pname=pArg.Name
-    elseif type(pArg)=="string" then pname=pArg end
-    if not WH.ServerWide and pname~=LocalPlayer.Name then return end
-    local weight   = wData and wData.Weight   or 0
-    local mutation = wData and wData.Mutation or nil
-    WH.Count = WH.Count+1
-    FetchIcon(item.Id, function() SendWH(BuildPayload(pname,item.Id,weight,mutation)) end)
+    local pname = (typeof(pArg)=="Instance" and pArg.Name) or (type(pArg)=="string" and pArg) or LocalPlayer.Name
+    if not WH.ServerWide and pname ~= LocalPlayer.Name then return end
+    WH.Count = WH.Count + 1
+    FetchIcon(item.Id, function() SendWH(BuildPayload(pname, item.Id, wData and wData.Weight or 0, wData and wData.Mutation or nil)) end)
 end
 
 local function StartLogger()
     if WH.Active then return true, "Already running" end
     if not ObtainedNewFish then return false, "Remote not found" end
-    WH.Active=true; WH.SentUUID={}; WH.Count=0
+    WH.Active = true; WH.SentUUID = {}; WH.Count = 0
     LogConns[#LogConns+1] = ObtainedNewFish.OnClientEvent:Connect(OnFishCaught)
     return true, "Logger started"
 end
-
-local function StopLogger()
-    WH.Active=false
-    for _,c in ipairs(LogConns) do pcall(function() c:Disconnect() end) end
-    LogConns={}
-end
+local function StopLogger() WH.Active = false; for _, c in ipairs(LogConns) do pcall(function() c:Disconnect() end) end; LogConns = {} end
 
 -- ============================================================
--- SECTION 13: TRADING
+-- SECTION 12: TRADING
 -- ============================================================
-local Trade = {
-    Target  = nil,
-    Inv     = {},
-    ByName  = {Active=false, Item=nil, Amount=1, Sent=0},
-}
+local Trade = { Target=nil, Inv={}, ByName={Active=false, Item=nil, Amount=1, Sent=0}, ByRar={Active=false, Tier=nil}, ByStone={Active=false, Stone=nil} }
 local STONES = {"Enchant Stone","Evolved Stone"}
 
 local function LoadInv()
@@ -537,729 +489,255 @@ local function LoadInv()
     pcall(function()
         local inv = PlayerData:Get("Inventory")
         if not inv then return end
-        local items = inv.Items or inv
-        if type(items)~="table" then return end
-        for _, item in pairs(items) do
+        for _, item in pairs(type(inv.Items or inv)=="table" and (inv.Items or inv) or {}) do
             if type(item)=="table" then
-                local name
-                if item.Id and FishDB[item.Id] then name=FishDB[item.Id].Name
-                elseif item.Name then name=tostring(item.Name) end
-                if name then Trade.Inv[name]=(Trade.Inv[name] or 0)+1 end
+                local name = (item.Id and FishDB[item.Id] and FishDB[item.Id].Name) or (item.Name and tostring(item.Name))
+                if name then Trade.Inv[name] = (Trade.Inv[name] or 0) + 1 end
             end
         end
     end)
 end
 
 local function GetInvNames()
-    local t={}
-    for n in pairs(Trade.Inv) do table.insert(t,n) end
-    table.sort(t)
-    if #t==0 then return {"(No items)"} end
-    return t
-end
-
-local TradeRemote
-local function GetTradeRemote()
-    if TradeRemote then return TradeRemote end
-    pcall(function()
-        for _,c in ipairs(net:GetDescendants()) do
-            if (c:IsA("RemoteEvent") or c:IsA("RemoteFunction")) and c.Name:lower():find("trade") then
-                TradeRemote=c; break
-            end
-        end
-    end)
-    return TradeRemote
+    local t = {}; for n in pairs(Trade.Inv) do table.insert(t, n) end
+    table.sort(t); return #t == 0 and {"(Load inventory first)"} or t
 end
 
 local function DoTrade(targetName, itemName, qty)
-    local remote = GetTradeRemote()
+    local remote = nil
+    pcall(function() for _, c in ipairs(net:GetDescendants()) do if (c:IsA("RemoteEvent") or c:IsA("RemoteFunction")) and c.Name:lower():find("trade") then remote = c; break end end end)
     if not remote then return false end
     local tp
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p.Name==targetName or p.DisplayName==targetName then tp=p; break end
-    end
+    for _, p in ipairs(Players:GetPlayers()) do if p.Name==targetName or p.DisplayName==targetName then tp=p; break end end
     if not tp then return false end
     local id = FishNameToId[itemName] or FishNameToId[itemName:lower()]
-    task.delay(math.random(40,70)/100, function()
-        pcall(function()
-            if remote:IsA("RemoteEvent") then remote:FireServer(tp,id or itemName,qty or 1)
-            else remote:InvokeServer(tp,id or itemName,qty or 1) end
-        end)
-    end)
+    task.delay(math.random(40,70)/100, function() pcall(function() if remote:IsA("RemoteEvent") then remote:FireServer(tp, id or itemName, qty or 1) else remote:InvokeServer(tp, id or itemName, qty or 1) end end) end)
     return true
 end
 
 -- ============================================================
--- SECTION 14: RAYFIELD WINDOW
+-- SECTION 13: RAYFIELD UI INITIALIZATION
 -- ============================================================
+
 local Window = Rayfield:CreateWindow({
-    Name             = "Vechnost v2.5.2",
-    LoadingTitle     = "Vechnost",
-    LoadingSubtitle  = "Fish It Automation Suite",
-    Theme            = "DarkBlue",
-    DisableRayfieldPrompts  = true,
-    DisableBuildWarnings    = false,
-    ConfigurationSaving     = {Enabled = false},
-    Discord                 = {Enabled = false},
-    KeySystem               = false,
+    Name = "Vechnost v2.5.2 | Rayfield Edition",
+    LoadingTitle = "Vechnost Executor",
+    LoadingSubtitle = "by Team Vechnost",
+    ConfigurationSaving = { Enabled = false },
+    KeySystem = false
 })
 
--- ============================================================
--- SECTION 15: TAB — INFO
--- ============================================================
-local TabInfo = Window:CreateTab("Info", 4483362458)
+local TabInfo    = Window:CreateTab("Info", 4483362458)
+local TabFish    = Window:CreateTab("Fishing", 4483362458)
+local TabTele    = Window:CreateTab("Teleport", 4483345998)
+local TabTrade   = Window:CreateTab("Trading", 4483362458)
+local TabShop    = Window:CreateTab("Shop", 4483345998)
+local TabHook    = Window:CreateTab("Webhook", 4483362458)
+local TabSet     = Window:CreateTab("Settings", 4483345998)
 
-TabInfo:CreateParagraph({
-    Title   = "Player",
-    Content = LocalPlayer.Name .. " | " .. LocalPlayer.DisplayName,
-})
-
-local StatsPara = TabInfo:CreateParagraph({
-    Title   = "Stats",
-    Content = "Klik tombol Refresh di bawah untuk memuat statistik",
-})
+-- ==================== INFO TAB ====================
+TabInfo:CreateSection("Player Info")
+TabInfo:CreateParagraph({Title = "Username", Content = LocalPlayer.Name})
+local StatsPara = TabInfo:CreateParagraph({Title = "Stats", Content = "Click [Refresh Stats] to load"})
 
 TabInfo:CreateButton({
-    Title       = "Refresh Stats",
-    Description = "Muat ulang statistik karakter",
-    Callback    = function()
+    Name = "Refresh Stats",
+    Callback = function()
         local s = GetStats()
-        StatsPara:Set(string.format("Coins: %s | Fish: %s | Bag: %d/%d",
-            FmtNum(s.Coins), FmtNum(s.TotalCaught), s.BPCount, s.BPMax))
-        Rayfield:Notify({Title="Stats",Content="Stats dimuat!",Duration=2})
+        StatsPara:Set({Title = "Stats", Content = string.format("Coins: %s | Fish: %s | Bag: %d/%d", FmtNum(s.Coins), FmtNum(s.TotalCaught), s.BPCount, s.BPMax)})
     end,
 })
 
-TabInfo:CreateParagraph({
-    Title   = "BAC Bypass v2.5.2",
-    Content = "✓ Zero loop saat idle\n✓ No RunService connection\n✓ No exploit API on init\n✓ State Machine fishing\n✓ Rate-limited semua remote",
-})
+TabInfo:CreateSection("About")
+TabInfo:CreateParagraph({Title = "Vechnost v2.5.2", Content = "Fix BAC-4226: Zero background loops saat idle\nTidak ada RunService connection\nRayfield Edition"})
 
-TabInfo:CreateParagraph({
-    Title   = "About",
-    Content = "Fish It Automation Suite\nDiscord: discord.gg/vechnost",
-})
-
--- ============================================================
--- SECTION 16: TAB — FISHING
--- ============================================================
-local TabFish = Window:CreateTab("Fishing", 4483362458)
-
-TabFish:CreateParagraph({
-    Title   = "Info BAC Bypass",
-    Content = "Cast: 3.5–7s interval\nReel: 0.25–0.85s delay reaksi\nShake: 8–14 CPS throttled\nLoop HANYA aktif saat toggle ON",
-})
-
+-- ==================== FISHING TAB ====================
 TabFish:CreateSection("Auto Fishing")
+TabFish:CreateParagraph({Title = "Info BAC", Content = "Cast 3.5-7s | Reel 0.25-0.85s delay | Shake 8-14 CPS\nLoop HANYA aktif saat min 1 toggle ON"})
 
 TabFish:CreateToggle({
-    Title         = "Auto Cast",
-    Description   = "Otomatis lempar kail dengan interval random",
-    CurrentValue  = false,
-    Callback      = function(v)
-        SetFishing("AutoCast", v)
-        Rayfield:Notify({Title="Auto Cast", Content=v and "ON (3.5-7s interval)" or "OFF", Duration=2})
-    end,
+    Name = "Auto Cast", CurrentValue = false,
+    Callback = function(Value) SetFishingFeature("AutoCast", Value); Rayfield:Notify({Title="Vechnost", Content=Value and "Auto Cast ON" or "Auto Cast OFF", Duration=2}) end
 })
-
 TabFish:CreateToggle({
-    Title         = "Auto Reel",
-    Description   = "Otomatis tarik saat ikan menggigit",
-    CurrentValue  = false,
-    Callback      = function(v)
-        SetFishing("AutoReel", v)
-        Rayfield:Notify({Title="Auto Reel", Content=v and "ON (human delay 0.25-0.85s)" or "OFF", Duration=2})
-    end,
+    Name = "Auto Reel", CurrentValue = false,
+    Callback = function(Value) SetFishingFeature("AutoReel", Value); Rayfield:Notify({Title="Vechnost", Content=Value and "Auto Reel ON" or "Auto Reel OFF", Duration=2}) end
 })
-
 TabFish:CreateToggle({
-    Title         = "Auto Shake",
-    Description   = "Otomatis klik saat minigame shake (8-14 CPS)",
-    CurrentValue  = false,
-    Callback      = function(v)
-        SetFishing("AutoShake", v)
-        Rayfield:Notify({Title="Auto Shake", Content=v and "ON (8-14 CPS)" or "OFF", Duration=2})
-    end,
+    Name = "Auto Shake", CurrentValue = false,
+    Callback = function(Value) SetFishingFeature("AutoShake", Value); Rayfield:Notify({Title="Vechnost", Content=Value and "Auto Shake ON (8-14 CPS)" or "Auto Shake OFF", Duration=2}) end
 })
 
 TabFish:CreateSection("Utility")
-
 TabFish:CreateToggle({
-    Title         = "Anti AFK",
-    Description   = "Mencegah kick AFK (VirtualUser 4-6 menit interval)",
-    CurrentValue  = false,
-    Callback      = function(v)
-        FS.AntiAFK = v
-        if v then StartAntiAFK() else StopAntiAFK() end
-        Rayfield:Notify({Title="Anti AFK", Content=v and "ON (4-6 min interval)" or "OFF", Duration=2})
-    end,
+    Name = "Anti AFK", CurrentValue = false,
+    Callback = function(Value) FS.AntiAFK = Value; if Value then StartAntiAFK() else StopAntiAFK() end; Rayfield:Notify({Title="Vechnost", Content=Value and "Anti AFK ON" or "Anti AFK OFF", Duration=2}) end
 })
-
 TabFish:CreateToggle({
-    Title         = "Auto Sell",
-    Description   = "Jual semua ikan otomatis tiap 8-12 detik",
-    CurrentValue  = false,
-    Callback      = function(v)
-        SetFishing("AutoSell", v)
-        Rayfield:Notify({Title="Auto Sell", Content=v and "ON (8-12s)" or "OFF", Duration=2})
-    end,
+    Name = "Auto Sell", CurrentValue = false,
+    Callback = function(Value) SetFishingFeature("AutoSell", Value); Rayfield:Notify({Title="Vechnost", Content=Value and "Auto Sell ON" or "Auto Sell OFF", Duration=2}) end
 })
-
 TabFish:CreateButton({
-    Title       = "Re-scan Remotes",
-    Description = "Cari ulang remote fishing dari game",
-    Callback    = function()
-        FindFishingRemotes()
-        local f={}
-        if FR.Cast  then f[#f+1]="Cast"  end
-        if FR.Reel  then f[#f+1]="Reel"  end
-        if FR.Shake then f[#f+1]="Shake" end
-        if FR.Sell  then f[#f+1]="Sell"  end
-        Rayfield:Notify({
-            Title   = "Remotes",
-            Content = "Found: "..(#f>0 and table.concat(f,", ") or "tidak ada"),
-            Duration = 3,
-        })
+    Name = "Re-scan Remotes",
+    Callback = function() FindFishingRemotes(); Rayfield:Notify({Title="Vechnost", Content="Remotes scanned.", Duration=2}) end
+})
+
+-- ==================== TELEPORT TAB ====================
+TabTele:CreateSection("Islands")
+TabTele:CreateParagraph({Title = "Petunjuk", Content = "Klik [Scan Islands] terlebih dahulu"})
+
+local TpDropdown = TabTele:CreateDropdown({
+    Name = "Select Island", Options = {"(Klik Scan dulu)"}, CurrentOption = {"(Klik Scan dulu)"}, MultipleOptions = false,
+    Callback = function(Option)
+        if Option[1] and Option[1] ~= "(Klik Scan dulu)" then
+            local ok, msg = TeleportTo(Option[1])
+            Rayfield:Notify({Title="Vechnost", Content=ok and msg or ("Gagal: "..msg), Duration=2})
+        end
     end,
 })
 
--- ============================================================
--- SECTION 17: TAB — TELEPORT
--- ============================================================
-local TabTP = Window:CreateTab("Teleport", 4483362458)
-
-TabTP:CreateParagraph({
-    Title   = "Petunjuk",
-    Content = "1. Klik [Scan Islands] untuk mendeteksi lokasi dari Workspace\n2. Pilih island di dropdown lalu klik [Teleport]",
-})
-
-local tpSelected = nil
-local tpDropdown = TabTP:CreateDropdown({
-    Title          = "Select Island",
-    Description    = "Klik Scan Islands dulu",
-    Values         = {"(Scan dulu)"},
-    CurrentOption  = {"(Scan dulu)"},
-    MultiSelection = false,
-    Callback       = function(v)
-        tpSelected = type(v)=="table" and v[1] or v
-    end,
-})
-
-TabTP:CreateButton({
-    Title       = "Scan Islands",
-    Description = "Deteksi semua lokasi dari Workspace game",
-    Callback    = function()
+TabTele:CreateButton({
+    Name = "Scan Islands",
+    Callback = function()
         ScanIslands()
-        local names = GetLocNames()
-        tpDropdown:Set(names)
-        Rayfield:Notify({
-            Title   = "Scan Selesai",
-            Content = "Ditemukan "..#TeleportLocations.." lokasi",
-            Duration = 3,
-        })
-    end,
+        TpDropdown:Refresh(GetLocNames(), true)
+        Rayfield:Notify({Title="Vechnost", Content="Ditemukan "..#TeleportLocations.." lokasi", Duration=2})
+    end
 })
 
-TabTP:CreateButton({
-    Title       = "Teleport ke Lokasi",
-    Description = "TP ke island yang dipilih di dropdown",
-    Callback    = function()
-        if not tpSelected or tpSelected=="(Scan dulu)" then
-            Rayfield:Notify({Title="Error",Content="Pilih island dulu!",Duration=2}); return
-        end
-        local ok, msg = TeleportTo(tpSelected)
-        Rayfield:Notify({Title=ok and "Teleport" or "Gagal", Content=msg, Duration=2})
-    end,
-})
-
-TabTP:CreateSection("Quick Teleport")
-
-TabTP:CreateButton({
-    Title       = "TP ke Spawn",
-    Description = "Teleport ke Fisherman Island (SpawnLocation)",
-    Callback    = function()
-        local char = LocalPlayer.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+TabTele:CreateSection("Quick TP")
+TabTele:CreateButton({
+    Name = "TP ke Spawn",
+    Callback = function()
         local sp = game:GetService("Workspace"):FindFirstChildOfClass("SpawnLocation")
-        if sp then
-            char.HumanoidRootPart.CFrame = sp.CFrame + Vector3.new(0,5,0)
-            Rayfield:Notify({Title="Teleport",Content="Teleported to Spawn",Duration=2})
-        else
-            Rayfield:Notify({Title="Error",Content="SpawnLocation not found",Duration=2})
+        if sp and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = sp.CFrame + Vector3.new(0,5,0)
         end
-    end,
+    end
 })
 
-TabTP:CreateButton({
-    Title       = "TP ke Pemain Terdekat",
-    Description = "Teleport ke karakter pemain terdekat",
-    Callback    = function()
-        local char = LocalPlayer.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-        local myPos = char.HumanoidRootPart.Position
-        local near, nearD = nil, math.huge
-        for _,pl in ipairs(Players:GetPlayers()) do
-            if pl~=LocalPlayer and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
-                local d = (pl.Character.HumanoidRootPart.Position-myPos).Magnitude
-                if d < nearD then nearD=d; near=pl end
-            end
-        end
-        if near then
-            char.HumanoidRootPart.CFrame = near.Character.HumanoidRootPart.CFrame + Vector3.new(3,0,0)
-            Rayfield:Notify({Title="Teleport",Content="TP to "..near.Name,Duration=2})
-        else
-            Rayfield:Notify({Title="Error",Content="Tidak ada pemain",Duration=2})
-        end
-    end,
-})
-
--- ============================================================
--- SECTION 18: TAB — TRADING
--- ============================================================
-local TabTrade = Window:CreateTab("Trading", 4483362458)
-
+-- ==================== TRADING TAB ====================
 TabTrade:CreateSection("Target Player")
+local plNames = {}; for _,pl in ipairs(Players:GetPlayers()) do if pl~=LocalPlayer then plNames[#plNames+1]=pl.Name end end
+if #plNames==0 then plNames={"(No players)"} end
 
-local tradeTargetSel = nil
-local playerListDD = TabTrade:CreateDropdown({
-    Title          = "Select Player",
-    Description    = "Pilih target trade",
-    Values         = (function()
-        local t={}
-        for _,pl in ipairs(Players:GetPlayers()) do
-            if pl~=LocalPlayer then t[#t+1]=pl.Name end
-        end
-        if #t==0 then t={"(No players)"} end
-        return t
-    end)(),
-    CurrentOption  = {""},
-    MultiSelection = false,
-    Callback       = function(v)
-        tradeTargetSel = type(v)=="table" and v[1] or v
-        Trade.Target = tradeTargetSel
-        Rayfield:Notify({Title="Trading",Content="Target: "..(tradeTargetSel or "-"),Duration=2})
-    end,
+local PlDropdown = TabTrade:CreateDropdown({
+    Name = "Select Player", Options = plNames, CurrentOption = {plNames[1]}, MultipleOptions = false,
+    Callback = function(Option) Trade.Target = Option[1] end
 })
-
 TabTrade:CreateButton({
-    Title       = "Refresh Player List",
-    Description = "Perbarui daftar pemain di server",
-    Callback    = function()
-        local t={}
-        for _,pl in ipairs(Players:GetPlayers()) do
-            if pl~=LocalPlayer then t[#t+1]=pl.Name end
-        end
+    Name = "Refresh Players",
+    Callback = function()
+        local t = {}; for _,pl in ipairs(Players:GetPlayers()) do if pl~=LocalPlayer then t[#t+1]=pl.Name end end
         if #t==0 then t={"(No players)"} end
-        playerListDD:Set(t)
-        Rayfield:Notify({Title="Players",Content="Found "..#t.." players",Duration=2})
-    end,
+        PlDropdown:Refresh(t, true)
+    end
 })
 
 TabTrade:CreateSection("Trade by Item")
-
-local invItemSel = nil
-local invItemDD = TabTrade:CreateDropdown({
-    Title          = "Select Item",
-    Description    = "Load inventory dulu",
-    Values         = {"(Load inventory)"},
-    CurrentOption  = {"(Load inventory)"},
-    MultiSelection = false,
-    Callback       = function(v)
-        invItemSel = type(v)=="table" and v[1] or v
-        Trade.ByName.Item = invItemSel
-    end,
+local TradeStatus = TabTrade:CreateParagraph({Title="Status", Content="Ready"})
+local ItemDropdown = TabTrade:CreateDropdown({
+    Name = "Select Item", Options = {"(Load inventory)"}, CurrentOption = {"(Load inventory)"}, MultipleOptions = false,
+    Callback = function(Option) Trade.ByName.Item = Option[1] end
 })
-
 TabTrade:CreateButton({
-    Title       = "Load Inventory",
-    Description = "Muat item dari backpack karakter",
-    Callback    = function()
-        LoadInv()
-        local names = GetInvNames()
-        invItemDD:Set(names)
-        Rayfield:Notify({Title="Inventory",Content="Loaded "..#names.." items",Duration=2})
-    end,
+    Name = "Load Inventory",
+    Callback = function() LoadInv(); ItemDropdown:Refresh(GetInvNames(), true) end
 })
-
 TabTrade:CreateInput({
-    Title         = "Amount",
-    Description   = "Jumlah item yang akan di-trade",
-    CurrentValue  = "1",
-    PlaceholderText = "Masukkan angka",
-    Numeric       = true,
-    Finished      = false,
-    Callback      = function(v)
-        local n = tonumber(v)
-        if n and n>0 then Trade.ByName.Amount=math.floor(n) end
-    end,
+    Name = "Amount", PlaceholderText = "1", RemoveTextAfterFocusLost = false,
+    Callback = function(Text) local n=tonumber(Text); if n and n>0 then Trade.ByName.Amount=math.floor(n) end end
 })
-
-local tradeByNameActive = false
 TabTrade:CreateToggle({
-    Title         = "Start Trade by Name",
-    Description   = "Mulai trade otomatis ke target",
-    CurrentValue  = false,
-    Callback      = function(v)
-        if v then
-            if not Trade.Target then
-                Rayfield:Notify({Title="Error",Content="Pilih target dulu!",Duration=3}); return end
-            if not Trade.ByName.Item then
-                Rayfield:Notify({Title="Error",Content="Pilih item dulu!",Duration=3}); return end
-            Trade.ByName.Active=true; Trade.ByName.Sent=0; tradeByNameActive=true
+    Name = "Start Trade by Name", CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            if not Trade.Target or not Trade.ByName.Item then Rayfield:Notify({Title="Error", Content="Select Target and Item first!", Duration=3}); return end
+            Trade.ByName.Active = true
             task.spawn(function()
                 local total=Trade.ByName.Amount; local item=Trade.ByName.Item; local tgt=Trade.Target
                 for i=1,total do
                     if not Trade.ByName.Active then break end
-                    DoTrade(tgt,item,1); Trade.ByName.Sent=i
+                    TradeStatus:Set({Title="Status", Content=("Sending %d/%d %s"):format(i,total,item)})
+                    DoTrade(tgt,item,1)
                     task.wait(math.random(40,70)/100)
                 end
-                Trade.ByName.Active=false; tradeByNameActive=false
-                Rayfield:Notify({
-                    Title   = "Trade Selesai",
-                    Content = string.format("Terkirim: %d/%d %s", Trade.ByName.Sent, total, item),
-                    Duration = 3,
-                })
+                Trade.ByName.Active=false
+                TradeStatus:Set({Title="Status", Content="Done"})
             end)
-        else
-            Trade.ByName.Active=false; tradeByNameActive=false
-        end
-    end,
+        else Trade.ByName.Active = false end
+    end
 })
 
-TabTrade:CreateSection("Trade by Rarity")
-
-TabTrade:CreateDropdown({
-    Title          = "Select Rarity",
-    Description    = "Pilih rarity untuk trade",
-    Values         = RARITY_LIST,
-    CurrentOption  = {"Common"},
-    MultiSelection = false,
-    Callback       = function(v)
-        local sel = type(v)=="table" and v[1] or v
-        if sel then
-            Rayfield:Notify({Title="Rarity",Content="Selected: "..sel,Duration=2})
-        end
-    end,
-})
-
-TabTrade:CreateSection("Trade Stone")
-
-TabTrade:CreateDropdown({
-    Title          = "Select Stone",
-    Description    = "Pilih jenis stone",
-    Values         = STONES,
-    CurrentOption  = {STONES[1]},
-    MultiSelection = false,
-    Callback       = function(_) end,
-})
-
--- ============================================================
--- SECTION 19: TAB — SHOP
--- ============================================================
-local TabShop = Window:CreateTab("Shop", 4483362458)
-
+-- ==================== SHOP TAB ====================
 TabShop:CreateSection("Bait Shop")
-
-local baitSel = nil
-local baitDD = TabShop:CreateDropdown({
-    Title          = "Select Bait",
-    Description    = "Pilih jenis umpan",
-    Values         = SHOP.Bait,
-    CurrentOption  = {SHOP.Bait[1]},
-    MultiSelection = false,
-    Callback       = function(v) baitSel = type(v)=="table" and v[1] or v end,
+local ShopSettings={SelectedBait=nil,AutoBuyBait=false,SelectedRod=nil,AutoBuyRod=false}
+TabShop:CreateDropdown({
+    Name="Select Bait", Options=SHOP.Bait, CurrentOption={SHOP.Bait[1]}, MultipleOptions=false,
+    Callback=function(Option) ShopSettings.SelectedBait = Option[1] end
 })
-
-local autoBaitActive = false
 TabShop:CreateToggle({
-    Title         = "Auto Buy Bait",
-    Description   = "Beli bait otomatis setiap 2-4 detik",
-    CurrentValue  = false,
-    Callback      = function(v)
-        autoBaitActive = v
-        if v then
+    Name="Auto Buy Bait", CurrentValue=false,
+    Callback=function(Value)
+        ShopSettings.AutoBuyBait=Value
+        if Value then
             task.spawn(function()
-                while autoBaitActive do
-                    if baitSel then BuyItem("Bait", baitSel) end
+                while ShopSettings.AutoBuyBait do
+                    if ShopSettings.SelectedBait then BuyItem("Bait", ShopSettings.SelectedBait) end
                     task.wait(math.random(20,40)/10)
                 end
             end)
         end
-        Rayfield:Notify({Title="Bait Shop",Content=v and "Auto Buy ON" or "Auto Buy OFF",Duration=2})
-    end,
-})
-
-TabShop:CreateSection("Rod Shop")
-
-local rodSel = nil
-local rodDD = TabShop:CreateDropdown({
-    Title          = "Select Rod",
-    Description    = "Pilih jenis joran",
-    Values         = SHOP.Rod,
-    CurrentOption  = {SHOP.Rod[1]},
-    MultiSelection = false,
-    Callback       = function(v) rodSel = type(v)=="table" and v[1] or v end,
-})
-
-local autoRodActive = false
-TabShop:CreateToggle({
-    Title         = "Auto Buy Rod",
-    Description   = "Beli rod otomatis setiap 3-5 detik",
-    CurrentValue  = false,
-    Callback      = function(v)
-        autoRodActive = v
-        if v then
-            task.spawn(function()
-                while autoRodActive do
-                    if rodSel then BuyItem("Rod", rodSel) end
-                    task.wait(math.random(30,50)/10)
-                end
-            end)
-        end
-        Rayfield:Notify({Title="Rod Shop",Content=v and "Auto Buy ON" or "Auto Buy OFF",Duration=2})
-    end,
+    end
 })
 
 TabShop:CreateSection("Merchant")
-
-local merchantSel = nil
-TabShop:CreateDropdown({
-    Title          = "Select Item",
-    Description    = "Pilih item dari merchant",
-    Values         = SHOP.Merchant,
-    CurrentOption  = {SHOP.Merchant[1]},
-    MultiSelection = false,
-    Callback       = function(v) merchantSel = type(v)=="table" and v[1] or v end,
+local MerDropdown = TabShop:CreateDropdown({
+    Name="Select Item", Options=SHOP.Merchant, CurrentOption={SHOP.Merchant[1]}, MultipleOptions=false,
+    Callback=function() end
 })
-
 TabShop:CreateButton({
-    Title       = "Buy Item",
-    Description = "Beli item yang dipilih dari merchant",
-    Callback    = function()
-        if merchantSel then
-            BuyItem("Merchant", merchantSel)
-            Rayfield:Notify({Title="Merchant",Content="Purchased: "..merchantSel,Duration=2})
-        else
-            Rayfield:Notify({Title="Error",Content="Pilih item dulu!",Duration=2})
-        end
-    end,
+    Name="Buy Merchant Item",
+    Callback=function() BuyItem("Merchant", MerDropdown.CurrentOption[1]) end
 })
 
-TabShop:CreateSection("Weather Machine (Crater Island)")
-
-TabShop:CreateParagraph({
-    Title   = "Info",
-    Content = "Teleport ke Crater Island dulu sebelum menggunakan fitur ini",
+-- ==================== WEBHOOK TAB ====================
+TabHook:CreateSection("Settings")
+TabHook:CreateInput({
+    Name = "Webhook URL", PlaceholderText = "https://discord.com/...", RemoveTextAfterFocusLost = false,
+    Callback = function(Text) WH.Url = Text:gsub("%s+","") end
+})
+TabHook:CreateToggle({
+    Name = "Server-Wide Notification", CurrentValue = true,
+    Callback = function(Value) WH.ServerWide = Value end
 })
 
-local weatherSel = nil
-TabShop:CreateDropdown({
-    Title          = "Select Weather",
-    Description    = "Pilih cuaca",
-    Values         = SHOP.Weather,
-    CurrentOption  = {SHOP.Weather[1]},
-    MultiSelection = false,
-    Callback       = function(v) weatherSel = type(v)=="table" and v[1] or v end,
-})
-
-TabShop:CreateButton({
-    Title       = "Request Weather",
-    Description = "Kirim request perubahan cuaca",
-    Callback    = function()
-        if weatherSel then
-            BuyItem("Weather", weatherSel)
-            Rayfield:Notify({Title="Weather",Content="Request: "..weatherSel,Duration=2})
-        else
-            Rayfield:Notify({Title="Error",Content="Pilih weather dulu!",Duration=2})
-        end
-    end,
-})
-
--- ============================================================
--- SECTION 20: TAB — WEBHOOK
--- ============================================================
-local TabWH = Window:CreateTab("Webhook", 4483362458)
-
-TabWH:CreateSection("Rarity Filter")
-
-local whRaritySel = nil
-TabWH:CreateDropdown({
-    Title          = "Filter Rarity",
-    Description    = "Hanya log rarity tertentu (kosong = semua)",
-    Values         = RARITY_LIST,
-    CurrentOption  = {""},
-    MultiSelection = false,
-    Callback       = function(v)
-        whRaritySel = type(v)=="table" and v[1] or v
-        WH.Rarities = {}
-        local t = RARITY_TIER[whRaritySel]
-        if t then WH.Rarities[t]=true end
-        Rayfield:Notify({Title="Filter",Content="Filter: "..(whRaritySel or "All"),Duration=2})
-    end,
-})
-
-TabWH:CreateButton({
-    Title       = "Clear Filter (All Rarity)",
-    Description = "Reset filter ke semua rarity",
-    Callback    = function()
-        WH.Rarities={}; whRaritySel=nil
-        Rayfield:Notify({Title="Filter",Content="All rarities diaktifkan",Duration=2})
-    end,
-})
-
-TabWH:CreateSection("URL Setup")
-
-local webhookUrlBuf = ""
-TabWH:CreateInput({
-    Title         = "Discord Webhook URL",
-    Description   = "Paste URL webhook Discord kamu",
-    CurrentValue  = "",
-    PlaceholderText = "https://discord.com/api/webhooks/...",
-    Numeric       = false,
-    Finished      = false,
-    Callback      = function(v) webhookUrlBuf = v end,
-})
-
-TabWH:CreateButton({
-    Title       = "Save Webhook URL",
-    Description = "Simpan URL dan validasi format",
-    Callback    = function()
-        local url = webhookUrlBuf:gsub("%s+","")
-        if not url:match("^https://discord") then
-            Rayfield:Notify({Title="Error",Content="URL tidak valid!",Duration=3}); return
-        end
-        WH.Url = url
-        Rayfield:Notify({Title="Webhook",Content="URL tersimpan!",Duration=2})
-    end,
-})
-
-TabWH:CreateSection("Mode & Control")
-
-TabWH:CreateToggle({
-    Title         = "Server-Wide Mode",
-    Description   = "Log tangkapan semua pemain di server",
-    CurrentValue  = true,
-    Callback      = function(v)
-        WH.ServerWide = v
-        Rayfield:Notify({Title="Mode",Content=v and "Server-Wide" or "Local Only",Duration=2})
-    end,
-})
-
-local logToggleRef = nil
-logToggleRef = TabWH:CreateToggle({
-    Title         = "Enable Logger",
-    Description   = "Aktifkan fish logger ke Discord",
-    CurrentValue  = false,
-    Callback      = function(v)
-        if v then
-            if WH.Url=="" then
-                Rayfield:Notify({Title="Error",Content="Set URL dulu!",Duration=3})
-                if logToggleRef then logToggleRef:Set(false) end
-                return
-            end
-            local ok, msg = StartLogger()
-            if ok then Rayfield:Notify({Title="Logger",Content="Logger ON!",Duration=2})
-            else
-                Rayfield:Notify({Title="Error",Content=msg,Duration=3})
-                if logToggleRef then logToggleRef:Set(false) end
-            end
-        else
+TabHook:CreateSection("Control")
+local HookStatus = TabHook:CreateParagraph({Title="Logger Status", Content="Offline"})
+TabHook:CreateToggle({
+    Name = "Enable Logger", CurrentValue = false,
+    Callback = function(Value)
+        if Value then
+            if WH.Url=="" then Rayfield:Notify({Title="Error", Content="Set URL First!", Duration=3}); return end
+            StartLogger()
+            HookStatus:Set({Title="Logger Status", Content="Active"})
+        else 
             StopLogger()
-            Rayfield:Notify({Title="Logger",Content="Logger OFF",Duration=2})
+            HookStatus:Set({Title="Logger Status", Content="Offline"})
         end
-    end,
+    end
 })
 
-TabWH:CreateSection("Status")
-
-TabWH:CreateButton({
-    Title       = "Refresh Status",
-    Description = "Cek status logger saat ini",
-    Callback    = function()
-        local status = WH.Active
-            and string.format("AKTIF | %s | Logged: %d", WH.ServerWide and "Server-Wide" or "Local", WH.Count)
-            or "OFFLINE"
-        Rayfield:Notify({Title="Logger Status",Content=status,Duration=3})
-    end,
+-- ==================== SETTING TAB ====================
+TabSet:CreateSection("Controls")
+TabSet:CreateButton({
+    Name = "Unload/Destroy Script",
+    Callback = function()
+        StopLogger()
+        StopAntiAFK()
+        StopFishingThread()
+        Rayfield:Destroy()
+    end
 })
 
--- ============================================================
--- SECTION 21: TAB — SETTING
--- ============================================================
-local TabSetting = Window:CreateTab("Setting", 4483362458)
-
-TabSetting:CreateSection("Test & Debug")
-
-TabSetting:CreateButton({
-    Title       = "Test Webhook",
-    Description = "Kirim pesan test ke Discord webhook",
-    Callback    = function()
-        if WH.Url=="" then
-            Rayfield:Notify({Title="Error",Content="Set URL dulu!",Duration=3}); return
-        end
-        SendWH({
-            username   = "Vechnost Notifier",
-            avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-            flags      = 32768,
-            components = {{type=17, components={
-                {type=10, content="**Test Message**"},
-                {type=14, spacing=1, divider=true},
-                {type=10, content="Webhook OK!\n**From:** "..LocalPlayer.Name.."\n**Script:** Vechnost v2.5.2 Rayfield"},
-                {type=10, content="-# "..os.date("!%B %d, %Y")},
-            }}}
-        })
-        Rayfield:Notify({Title="Webhook",Content="Test message terkirim!",Duration=2})
-    end,
-})
-
-TabSetting:CreateButton({
-    Title       = "Reset Log Counter",
-    Description = "Reset counter webhook ke 0",
-    Callback    = function()
-        WH.Count=0; WH.SentUUID={}
-        Rayfield:Notify({Title="Reset",Content="Counter direset!",Duration=2})
-    end,
-})
-
-TabSetting:CreateButton({
-    Title       = "Re-scan All Remotes",
-    Description = "Cari ulang semua remote fishing",
-    Callback    = function()
-        FindFishingRemotes()
-        local f={}
-        if FR.Cast  then f[#f+1]="Cast"  end
-        if FR.Reel  then f[#f+1]="Reel"  end
-        if FR.Shake then f[#f+1]="Shake" end
-        if FR.Sell  then f[#f+1]="Sell"  end
-        Rayfield:Notify({
-            Title   = "Remotes",
-            Content = #f>0 and table.concat(f,", ") or "Tidak ada remote ditemukan",
-            Duration = 3,
-        })
-    end,
-})
-
-TabSetting:CreateSection("BAC Bypass Notes")
-
-TabSetting:CreateParagraph({
-    Title   = "Fix Log v2.5.2",
-    Content = "• No RunService.RenderStepped\n• Zero background thread saat idle\n• State machine fishing\n• Rate limiter semua remote\n• VirtualInputManager dihapus total\n• Scan dilakukan on-demand",
-})
-
-TabSetting:CreateSection("Credits")
-
-TabSetting:CreateParagraph({
-    Title   = "Vechnost Team",
-    Content = "Discord: discord.gg/vechnost\nUI: Rayfield by Sirius",
-})
-
--- ============================================================
--- INIT
--- ============================================================
-warn("[Vechnost] v2.5.2 Rayfield Edition loaded!")
-Rayfield:Notify({
-    Title    = "Vechnost v2.5.2",
-    Content  = "Rayfield Edition loaded!\nBAC-4226 Bypassed",
-    Duration = 4,
-    Image    = 4483362458,
-})
+Rayfield:Notify({Title = "Vechnost v2.5.2", Content = "Script Loaded Successfully", Duration = 3})
