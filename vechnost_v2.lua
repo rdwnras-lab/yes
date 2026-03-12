@@ -91,16 +91,13 @@ local Settings = {
     Url = "",
     SentUUID = {},
     SelectedRarities = {},
-    ServerWide = false,  -- Local only
+    ServerWide = false,
     LogCount = 0,
-    -- Main Features
-    AutoUseRod = false,
-    AutoSell = false,
-    DisablePopups = false,
-    DisableMinigame = false,
-    LegitFishing = false,
-    -- Utility (backend-only)
+    -- Main (dari v2, sudah teruji aman)
+    AutoClick = false,
     AntiAFK = false,
+    DisablePopups = false,
+    AutoSellAll = false,
     AutoReconnect = false,
     PingMonitor = false,
 }
@@ -1152,174 +1149,43 @@ local function StopLogger()
 end
 
 -- =====================================================
--- BAGIAN 10B: AUTOMATION (MACROS)
+-- BAGIAN 10B: AUTOMATION (MACROS) — v2 safe
 -- =====================================================
 local TeleportService = game:GetService("TeleportService")
 local GuiService      = game:GetService("GuiService")
 
--- ──────────────────────────────────────────
--- HELPER: Ambil rnet (cache, tidak di-call tiap loop)
--- ──────────────────────────────────────────
-local _rnetCache = nil
-local function getRnet()
-    if _rnetCache then return _rnetCache end
-    pcall(function()
-        local pkg   = ReplicatedStorage:FindFirstChild("Packages")
-        local idx   = pkg and pkg:FindFirstChild("_Index")
-        local sleit = idx and idx:FindFirstChild("sleitnick_net@0.2.0")
-        local n     = sleit and sleit:FindFirstChild("net")
-        if n then _rnetCache = n end
-    end)
-    return _rnetCache
-end
-
--- ──────────────────────────────────────────
--- HELPER: Cek apakah minigame sedang aktif
--- (lihat UI, bukan remote spam)
--- ──────────────────────────────────────────
-local function isMinigameActive()
-    local active = false
-    pcall(function()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        if not pg then return end
-        -- Cari FishingMinigame GUI (namanya bisa beda)
-        for _, gui in pairs(pg:GetChildren()) do
-            local name = string.lower(gui.Name)
-            if string.find(name, "minigame") or string.find(name, "fishing") then
-                if gui.Enabled then active = true end
-            end
-        end
-    end)
-    return active
-end
-
--- ──────────────────────────────────────────
--- 1. ANTI-AFK (tetap pakai event, bukan loop)
--- ──────────────────────────────────────────
-Players.LocalPlayer.Idled:Connect(function()
+-- 1. Anti-AFK (event-based, aman)
+local afkConn = Players.LocalPlayer.Idled:Connect(function()
     if Settings.AntiAFK then
         pcall(function() UserInputService.InputBegan:Fire(Enum.KeyCode.F20, false) end)
     end
 end)
 if getconnections then
-    pcall(function()
-        for _, v in pairs(getconnections(Players.LocalPlayer.Idled)) do
-            if v.Disable then v:Disable() end
-        end
-    end)
+    for _, v in pairs(getconnections(Players.LocalPlayer.Idled)) do
+        if v.Disable then v:Disable() end
+    end
 end
 
--- ──────────────────────────────────────────
--- 2. AUTO USE ROD
--- Satu siklus penuh per iterasi, delay humanlike
--- TIDAK pakai getRnet berulang — cache sekali
--- ──────────────────────────────────────────
-task.spawn(function()
-    -- Tunggu rnet siap (max 15 detik)
-    local waitedRnet = 0
-    repeat task.wait(1); waitedRnet = waitedRnet + 1 until getRnet() or waitedRnet >= 15
-
-    while true do
-        task.wait(1.5 + math.random(0, 100) / 100) -- 1.5–2.5s, acak
-
-        if not Settings.AutoUseRod then continue end
-
-        pcall(function()
-            local rnet     = getRnet(); if not rnet then return end
-            local equipEnv = rnet:FindFirstChild("RE/EquipToolFromHotbar")
-            local chargeEnv= rnet:FindFirstChild("RF/ChargeFishingRod")
-            if equipEnv and chargeEnv then
-                equipEnv:FireServer()
-                task.wait(0.3 + math.random(0, 10) / 100)
-                chargeEnv:InvokeServer(1)
-            end
-        end)
-    end
-end)
-
--- ──────────────────────────────────────────
--- 3. DISABLE MINIGAME
--- Deteksi minigame aktif via UI, baru complete
--- TIDAK spam remote tanpa cek state
--- ──────────────────────────────────────────
-task.spawn(function()
-    -- Juga load FishingController untuk complete via klien
-    local FishingController = nil
-    pcall(function()
-        FishingController = require(
-            ReplicatedStorage:WaitForChild("Controllers", 15)
-                :WaitForChild("FishingController", 10)
-        )
-    end)
-
-    while true do
-        task.wait(0.2)
-
-        if not Settings.DisableMinigame then continue end
-
-        -- Hanya complete jika minigame benar-benar aktif
-        if FishingController then
-            pcall(function()
-                -- RequestFishingMinigameClick cukup untuk skip minigame
-                FishingController:RequestFishingMinigameClick()
-            end)
-        else
-            -- Fallback: cek via remote, tapi hanya jika minigame aktif di UI
-            if isMinigameActive() then
-                pcall(function()
-                    local rnet       = getRnet(); if not rnet then return end
-                    local completeEnv= rnet:FindFirstChild("RE/FishingCompleted")
-                    if completeEnv then completeEnv:FireServer() end
-                end)
-            end
-        end
-    end
-end)
-
--- ──────────────────────────────────────────
--- 4. LEGIT FISHING
--- Hanya FishingController (client method, tidak fire remote)
--- + auto cast dengan delay acak
--- ──────────────────────────────────────────
+-- 2. Auto Click Fishing (FishingController client method — aman, tidak fire server remote)
 task.spawn(function()
     local FishingController = nil
     pcall(function()
-        FishingController = require(
-            ReplicatedStorage:WaitForChild("Controllers", 15)
-                :WaitForChild("FishingController", 10)
-        )
+        FishingController = require(ReplicatedStorage:WaitForChild("Controllers", 10):WaitForChild("FishingController", 10))
     end)
-
     while true do
-        task.wait(0.08 + math.random(0, 80) / 1000) -- 80–160ms acak
-
-        if not Settings.LegitFishing then continue end
-
-        -- Auto click minigame (client-side, AMAN)
-        if FishingController then
-            pcall(function()
-                FishingController:RequestFishingMinigameClick()
-            end)
-        end
-
-        -- Auto cast jika tidak sedang memancing
-        if not isMinigameActive() then
-            pcall(function()
-                local rnet      = getRnet(); if not rnet then return end
-                local chargeEnv = rnet:FindFirstChild("RF/ChargeFishingRod")
-                if chargeEnv then chargeEnv:InvokeServer(1) end
-            end)
-            task.wait(0.5 + math.random(0, 50) / 100) -- jeda setelah cast
+        task.wait(0.1)
+        if Settings.AutoClick and FishingController then
+            local randomDelay = math.random(80, 150) / 1000
+            pcall(function() FishingController:RequestFishingMinigameClick() end)
+            task.wait(randomDelay)
         end
     end
 end)
 
--- ──────────────────────────────────────────
--- 5. DISABLE POPUP
--- ──────────────────────────────────────────
+-- 3. Disable Popups (UI property, aman)
 task.spawn(function()
-    local _pg2 = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
-    local SmallNotification = _pg2 and _pg2:WaitForChild("Small Notification", 10)
+    local _pg = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+    local SmallNotification = _pg and _pg:WaitForChild("Small Notification", 10)
     RunService.RenderStepped:Connect(function()
         if Settings.DisablePopups and SmallNotification then
             pcall(function() SmallNotification.Enabled = false end)
@@ -1327,60 +1193,49 @@ task.spawn(function()
     end)
 end)
 
--- ──────────────────────────────────────────
--- 6. AUTO SELL (interval 30s, tidak spam)
--- ──────────────────────────────────────────
+-- 4. Auto Sell All (interval 30s, aman)
 task.spawn(function()
     while true do
         task.wait(30)
-        if not Settings.AutoSell then continue end
-        pcall(function()
-            -- Coba via rnet RF/SellAllItems
-            -- Sell event ada langsung di ReplicatedStorage
-            local sellEvent = ReplicatedStorage:FindFirstChild("RF/SellAllItems")
-            if not sellEvent then
-                -- Fallback: cari di rnet
-                local rnet = getRnet()
-                sellEvent = rnet and rnet:FindFirstChild("RF/SellAllItems")
-            end
-            if sellEvent then
-                sellEvent:InvokeServer()
-                Rayfield:Notify({ Title = "Vechnost", Content = "Auto Sell: Ikan terjual!", Duration = 2 })
-            end
-        end)
+        if Settings.AutoSellAll then
+            pcall(function()
+                local sellEvent = game:GetService("ReplicatedStorage"):FindFirstChild("RF/SellAllItems")
+                if sellEvent then
+                    sellEvent:InvokeServer()
+                    Rayfield:Notify({ Title = "Vechnost", Content = "Auto Sell: Ikan terjual!", Duration = 2 })
+                end
+            end)
+        end
     end
 end)
 
--- ──────────────────────────────────────────
--- 7. PING MONITOR (backend, 5s interval)
--- ──────────────────────────────────────────
+-- 5. Ping Monitor (backend webhook, 5s interval, aman)
 task.spawn(function()
-    local lastAlert = 0
+    local LastPingAlert = 0
     while true do
         task.wait(5)
-        if not Settings.PingMonitor or Settings.Url == "" then continue end
-        pcall(function()
-            local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-            if ping > 500 and (tick() - lastAlert > 60) then
-                lastAlert = tick()
-                SendWebhook({
-                    username    = "Vechnost Alert",
-                    avatar_url  = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
-                    embeds = {{ title = "⚠️ HIGH PING", description = "Ping: " .. math.floor(ping) .. " ms | " .. LocalPlayer.Name, color = 16776960 }}
-                })
-            end
-        end)
+        if Settings.PingMonitor and Settings.Url ~= "" then
+            pcall(function()
+                local ping = game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
+                if ping > 500 and (tick() - LastPingAlert > 60) then
+                    LastPingAlert = tick()
+                    SendWebhook({
+                        username   = "Vechnost Alert",
+                        avatar_url = "https://cdn.discordapp.com/attachments/1476338840267653221/1478712225832374272/VIA_LOGIN.png",
+                        embeds = {{ title = "⚠️ HIGH PING", description = "Ping: " .. math.floor(ping) .. " ms | " .. LocalPlayer.Name, color = 16776960 }}
+                    })
+                end
+            end)
+        end
     end
 end)
 
--- ──────────────────────────────────────────
--- 8. AUTO RECONNECT (event-based, tidak loop)
--- ──────────────────────────────────────────
+-- 6. Auto Reconnect (event-based, aman)
 local isReconnecting = false
-local function triggerReconnect(msg)
+local function triggerReconnect(kickMsg)
     if not Settings.AutoReconnect or isReconnecting then return end
     isReconnecting = true
-    warn("[Vechnost] Reconnect:", tostring(msg))
+    warn("[Vechnost] Auto Reconnect triggered: " .. tostring(kickMsg))
     task.wait(5)
     pcall(function()
         if #Players:GetPlayers() <= 1 then
@@ -1390,15 +1245,16 @@ local function triggerReconnect(msg)
         end
     end)
 end
-GuiService.ErrorMessageChanged:Connect(function(m) triggerReconnect(m) end)
+GuiService.ErrorMessageChanged:Connect(function(msg) triggerReconnect(msg) end)
 pcall(function()
-    local pGui = CoreGui:FindFirstChild("RobloxPromptGui")
-    if pGui then
-        local ov = pGui:FindFirstChild("promptOverlay", true)
-        if ov then
-            ov.DescendantAdded:Connect(function(child)
+    local promptGui = CoreGui:FindFirstChild("RobloxPromptGui")
+    if promptGui then
+        local promptOverlay = promptGui:FindFirstChild("promptOverlay", true)
+        if promptOverlay then
+            promptOverlay.DescendantAdded:Connect(function(child)
                 if child.Name == "ErrorTitle" or child.Name == "ErrorMessage" then
-                    task.wait(0.5); triggerReconnect(child.Text)
+                    task.wait(0.5)
+                    triggerReconnect(child.Text)
                 end
             end)
         end
@@ -1600,25 +1456,37 @@ TabInfo:CreateButton({
 -- =====================================================
 -- TAB: MAIN
 -- =====================================================
-TabMain:CreateSection("Support Feature")
+TabMain:CreateSection("Auto Fishing")
 
 TabMain:CreateToggle({
-    Name = "Auto Use Rod",
+    Name = "Auto Click Fishing",
     CurrentValue = false,
-    Flag = "AutoUseRod",
+    Flag = "AutoClick",
     Callback = function(Value)
-        Settings.AutoUseRod = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Use Rod: ON" or "Auto Use Rod: OFF", Duration = 2 })
+        Settings.AutoClick = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Click: ON" or "Auto Click: OFF", Duration = 2 })
     end
 })
 
 TabMain:CreateToggle({
-    Name = "Auto Sell",
+    Name = "Auto Sell (tiap 30s)",
     CurrentValue = false,
-    Flag = "AutoSell",
+    Flag = "AutoSellAll",
     Callback = function(Value)
-        Settings.AutoSell = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Sell: ON (tiap 30s)" or "Auto Sell: OFF", Duration = 2 })
+        Settings.AutoSellAll = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Sell: ON" or "Auto Sell: OFF", Duration = 2 })
+    end
+})
+
+TabMain:CreateSection("Utility")
+
+TabMain:CreateToggle({
+    Name = "Anti-AFK",
+    CurrentValue = false,
+    Flag = "AntiAFK",
+    Callback = function(Value)
+        Settings.AntiAFK = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Anti-AFK: ON" or "Anti-AFK: OFF", Duration = 2 })
     end
 })
 
@@ -1628,33 +1496,29 @@ TabMain:CreateToggle({
     Flag = "DisablePopups",
     Callback = function(Value)
         Settings.DisablePopups = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Popup dinonaktifkan" or "Popup diaktifkan", Duration = 2 })
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Popup: nonaktif" or "Popup: aktif", Duration = 2 })
+    end
+})
+
+TabMain:CreateSection("Server")
+
+TabMain:CreateToggle({
+    Name = "Auto Reconnect",
+    CurrentValue = false,
+    Flag = "AutoReconnect",
+    Callback = function(Value)
+        Settings.AutoReconnect = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Auto Reconnect: ON" or "Auto Reconnect: OFF", Duration = 2 })
     end
 })
 
 TabMain:CreateToggle({
-    Name = "Disable Minigame",
+    Name = "Ping Monitor Webhook",
     CurrentValue = false,
-    Flag = "DisableMinigame",
+    Flag = "PingMonitor",
     Callback = function(Value)
-        Settings.DisableMinigame = Value
-        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Disable Minigame: ON" or "Disable Minigame: OFF", Duration = 2 })
-    end
-})
-
-TabMain:CreateSection("Legit Fishing")
-
-TabMain:CreateToggle({
-    Name = "Legit Fishing",
-    CurrentValue = false,
-    Flag = "LegitFishing",
-    Callback = function(Value)
-        Settings.LegitFishing = Value
-        Rayfield:Notify({
-            Title = "Vechnost",
-            Content = Value and "Legit Fishing: ON (auto cast + auto click)" or "Legit Fishing: OFF",
-            Duration = 2
-        })
+        Settings.PingMonitor = Value
+        Rayfield:Notify({ Title = "Vechnost", Content = Value and "Ping Monitor: ON" or "Ping Monitor: OFF", Duration = 2 })
     end
 })
 
