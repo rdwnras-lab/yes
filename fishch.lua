@@ -1,517 +1,743 @@
--- Fisch Auto Script with Fluent UI
--- WARNING: Using this script may result in account suspension/ban
--- Use at your own risk for educational purposes only
+-- ============================================================
+--  Fisch Script | Fluent UI
+--  Game  : Fisch (Roblox) - 2026 Updates (Tidefall, Scoria Reach, Lost Jungle)
+--  GUI   : https://github.com/dawid-scripts/Fluent
+--  Fixed : AddSection takes plain string (not table)
+-- ============================================================
 
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local Fluent         = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager    = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
--- Services
-local Players = game:GetService("Players")
+-- ============================================================
+--  Services
+-- ============================================================
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
--- Variables
-local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:WaitForChild("Humanoid")
+local LocalPlayer  = Players.LocalPlayer
 
--- Script State Variables
-local scriptState = {
-    autoCast = false,
-    autoShake = false,
-    autoReel = false,
-    instantBobber = false,
-    centerShake = false,
-    alwaysProgressing = false,
-    antiProgressLoss = false,
-    superBoat = false,
-    sellAllOnCatch = false,
-    autoSellAll = false,
-    autoSellDelay = 5,
-    autoCollectStarCrater = false,
-    showRadar = false,
-    antiOxygen = false,
-    antiTemperature = false,
-    antiPressure = false,
-    selectedRod = "Basic Rod",
-    selectedCrate = "Basic Crate",
-    selectedTotem = "Basic Totem",
-    crateAmount = 1,
-    totemAmount = 1,
-    selectedTeleport = "Spawn"
+local function GetChar()
+    return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+end
+local function GetRoot()
+    local c = GetChar()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+-- ============================================================
+--  Remote Helpers
+-- ============================================================
+local RS = game:GetService("ReplicatedStorage")
+
+local function WaitForRemote(name, timeout)
+    timeout = timeout or 3
+    local t = 0
+    while t < timeout do
+        local r = RS:FindFirstChild(name, true)
+        if r then return r end
+        task.wait(0.1)
+        t += 0.1
+    end
+    return nil
+end
+
+local function FireRemote(name, ...)
+    local r = WaitForRemote(name, 1)
+    if r and r:IsA("RemoteEvent") then
+        pcall(function() r:FireServer(...) end)
+    end
+end
+
+-- ============================================================
+--  State
+-- ============================================================
+local State = {
+    AutoCast          = false,
+    AutoShake         = false,
+    AutoReel          = false,
+    InstantBobber     = false,
+    CenterShake       = false,
+    AlwaysProgressing = false,
+    AntiProgressLoss  = false,
+    SuperBoat         = false,
+    BoatSpeed         = 60,
+    SellOnCatch       = false,
+    AutoSell          = false,
+    AutoSellDelay     = 5,
+    AutoCollectStar   = false,
+    ShowRadar         = false,
+    AntiOxygen        = false,
+    AntiTemperature   = false,
+    AntiPressure      = false,
+    SelectedRod       = "Flimsy Rod",
+    SelectedCrate     = "Common Crate",
+    SelectedTotem     = "Luck Totem",
+    BuyCrateAmount    = 1,
+    BuyTotemAmount    = 1,
+    SelectedTeleport  = "Spawn Island",
+    lastSellTime      = os.clock(),
+    progressCache     = 0,
 }
 
--- Create Window
+-- ============================================================
+--  Data Lists (Updated 2026)
+-- ============================================================
+local RodList = {
+    "Flimsy Rod", "Old Rod", "Basic Rod", "Travelers Rod",
+    "Trusty Rod", "Hardy Rod", "Lucky Rod", "Oceanic Rod",
+    "Storm Rod", "Deep Rod", "Abyss Rod", "Lunar Rod",
+    "Masterline Rod",  -- Feb 2026: fishes any liquid
+    "Tidefall Rod",    -- Jan 2026 Tidefall update
+    "Volcanic Rod",    -- Feb 15 2026 Scoria Reach
+    "Jungle Rod",      -- Mar 7 2026 Lost Jungle
+    "Toxic Rod",       -- Mar 7 2026 Toxic Grove (Lost Jungle Expansion)
+    "Ancient Rod", "Celestial Rod", "Astraeus Rod",
+}
+
+local CrateList = {
+    "Common Crate", "Uncommon Crate", "Rare Crate",
+    "Epic Crate", "Legendary Crate", "Mythic Crate",
+    "Tidefall Crate", "Volcanic Crate", "Jungle Crate",
+}
+
+local TotemList = {
+    "Luck Totem", "Speed Totem", "Rare Totem", "Double Totem",
+    "Epic Totem", "Legendary Totem", "Hunt Totem", "Mythic Totem",
+}
+
+-- 2026 locations
+local TeleportLocations = {
+    ["Spawn Island"]    = Vector3.new(0,    5,   0),
+    ["Moosewood"]       = Vector3.new(478,  5,   134),
+    ["Roslit Bay"]      = Vector3.new(-350, 5,   280),
+    ["Forsaken Shores"] = Vector3.new(820,  5,  -400),
+    ["Deep Sea"]        = Vector3.new(-620, 5,   580),
+    ["Tidefall"]        = Vector3.new(1100, -40, 200),  -- Jan 2026 underwater
+    ["Scoria Reach"]    = Vector3.new(-900, 5,  -700),  -- Feb 2026 lava island
+    ["Lost Jungle"]     = Vector3.new(700,  5,   900),  -- Mar 2026
+    ["Toxic Grove"]     = Vector3.new(720,  5,   980),  -- Mar 7 2026 expansion
+    ["Trade Plaza"]     = Vector3.new(50,   5,   250),
+    ["Star Crater"]     = Vector3.new(-100, 5,  -600),
+}
+
+local TeleportNames = {}
+for k in pairs(TeleportLocations) do table.insert(TeleportNames, k) end
+table.sort(TeleportNames)
+
+-- ============================================================
+--  Window
+-- ============================================================
 local Window = Fluent:CreateWindow({
-    Title = "Fisch Auto Script v2.0",
-    SubTitle = "by You.com AI",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
-    Acrylic = true,
-    Theme = "Darker",
-    MinimizeKey = Enum.KeyCode.LeftControl
+    Title       = "Fisch Script",
+    SubTitle    = "2026 Edition - Lost Jungle Ready",
+    TabWidth    = 160,
+    Size        = UDim2.fromOffset(620, 490),
+    Acrylic     = true,
+    Theme       = "Dark",
+    MinimizeKey = Enum.KeyCode.RightControl,
 })
 
--- Create Tabs
-local FishingTab = Window:AddTab({ Title = "Fishing", Icon = "🎣" })
-local UtilitiesTab = Window:AddTab({ Title = "Utilities", Icon = "🛠️" })
-local TeleportsTab = Window:AddTab({ Title = "Teleports", Icon = "🚀" })
+local Tabs = {
+    Fishing   = Window:AddTab({ Title = "Fishing",   Icon = "fish" }),
+    Utilities = Window:AddTab({ Title = "Utilities", Icon = "wrench" }),
+    Teleports = Window:AddTab({ Title = "Teleports", Icon = "map-pin" }),
+    Settings  = Window:AddTab({ Title = "Settings",  Icon = "settings" }),
+}
 
--- Fishing Tab - Automation Section
-local AutomationSection = FishingTab:AddSection("Automation")
+local Options = Fluent.Options
 
-local AutoCastToggle = AutomationSection:AddToggle("AutoCast", {
-    Title = "Auto Cast",
-    Description = "Automatically casts fishing line",
-    Default = false
+-- ============================================================
+--  FISHING TAB
+-- ============================================================
+
+-- FIX: AddSection harus menerima STRING bukan table {}
+Tabs.Fishing:AddSection("Automation")
+
+Tabs.Fishing:AddToggle("AutoCast", {
+    Title       = "Auto Cast",
+    Description = "Otomatis melempar kail ketika idle.",
+    Default     = false,
+    Callback    = function(v) State.AutoCast = v end,
 })
 
-AutoCastToggle:OnChanged(function(value)
-    scriptState.autoCast = value
-    if value then
-        spawn(function()
-            while scriptState.autoCast do
-                wait(1)
-                -- Auto cast logic
-                if player.Character and player.Character:FindFirstChild("Tool") then
-                    local tool = player.Character.Tool
-                    if tool.Name:find("Rod") then
-                        tool:Activate()
+Tabs.Fishing:AddToggle("AutoShake", {
+    Title       = "Auto Shake",
+    Description = "Otomatis handle minigame shake/bobber.",
+    Default     = false,
+    Callback    = function(v) State.AutoShake = v end,
+})
+
+Tabs.Fishing:AddToggle("AutoReel", {
+    Title       = "Auto Reel",
+    Description = "Otomatis menarik ikan setelah bobber bergetar.",
+    Default     = false,
+    Callback    = function(v) State.AutoReel = v end,
+})
+
+Tabs.Fishing:AddSection("Modification")
+
+Tabs.Fishing:AddToggle("InstantBobber", {
+    Title       = "Instant Bobber",
+    Description = "Pelampung langsung menyentuh air setelah cast.",
+    Default     = false,
+    Callback    = function(v) State.InstantBobber = v end,
+})
+
+Tabs.Fishing:AddToggle("CenterShake", {
+    Title       = "Center Shake",
+    Description = "Indikator shake selalu berada di tengah.",
+    Default     = false,
+    Callback    = function(v) State.CenterShake = v end,
+})
+
+Tabs.Fishing:AddToggle("AlwaysProgressing", {
+    Title       = "Always Progressing",
+    Description = "Progress bar tangkapan terus maju.",
+    Default     = false,
+    Callback    = function(v) State.AlwaysProgressing = v end,
+})
+
+Tabs.Fishing:AddToggle("AntiProgressLoss", {
+    Title       = "Anti Progress Loss",
+    Description = "Progress tangkapan tidak akan berkurang.",
+    Default     = false,
+    Callback    = function(v)
+        State.AntiProgressLoss = v
+        if v then State.progressCache = 0 end
+    end,
+})
+
+-- ============================================================
+--  UTILITIES TAB
+-- ============================================================
+
+Tabs.Utilities:AddSection("Boat")
+
+Tabs.Utilities:AddToggle("SuperBoat", {
+    Title       = "Super Boat",
+    Description = "Boost kecepatan kapalmu secara drastis.",
+    Default     = false,
+    Callback    = function(v)
+        State.SuperBoat = v
+        task.spawn(function()
+            for _, seat in ipairs(workspace:GetDescendants()) do
+                if seat:IsA("VehicleSeat") then
+                    local owner = seat.Parent:FindFirstChild("Owner")
+                    if owner and owner.Value == LocalPlayer.Name then
+                        pcall(function()
+                            seat.MaxSpeed  = v and State.BoatSpeed or 30
+                            seat.Torque    = v and 10000 or 2000
+                            seat.TurnSpeed = v and 4 or 1
+                        end)
                     end
                 end
             end
         end)
-    end
-end)
-
-local AutoShakeToggle = AutomationSection:AddToggle("AutoShake", {
-    Title = "Auto Shake",
-    Description = "Automatically shakes when prompted",
-    Default = false
+    end,
 })
 
-AutoShakeToggle:OnChanged(function(value)
-    scriptState.autoShake = value
-end)
-
-local AutoReelToggle = AutomationSection:AddToggle("AutoReel", {
-    Title = "Auto Reel",
-    Description = "Automatically reels in fish",
-    Default = false
+Tabs.Utilities:AddSlider("BoatSpeed", {
+    Title       = "Boat Speed",
+    Description = "Kecepatan Super Boat.",
+    Default     = 60,
+    Min         = 30,
+    Max         = 400,
+    Rounding    = 0,
+    Callback    = function(v) State.BoatSpeed = v end,
 })
 
-AutoReelToggle:OnChanged(function(value)
-    scriptState.autoReel = value
-end)
+Tabs.Utilities:AddSection("Selling")
 
--- Fishing Tab - Modification Section
-local ModificationSection = FishingTab:AddSection("Modification")
-
-local InstantBobberToggle = ModificationSection:AddToggle("InstantBobber", {
-    Title = "Instant Bobber",
-    Description = "Makes bobber appear instantly",
-    Default = false
+Tabs.Utilities:AddToggle("SellOnCatch", {
+    Title       = "Sell All On Fish Caught",
+    Description = "Langsung jual semua ikan setiap kali dapat tangkapan.",
+    Default     = false,
+    Callback    = function(v) State.SellOnCatch = v end,
 })
 
-InstantBobberToggle:OnChanged(function(value)
-    scriptState.instantBobber = value
-end)
-
-local CenterShakeToggle = ModificationSection:AddToggle("CenterShake", {
-    Title = "Center Shake",
-    Description = "Centers shake mini-game automatically",
-    Default = false
+Tabs.Utilities:AddSlider("AutoSellDelay", {
+    Title       = "Auto Sell Delay (Minutes)",
+    Description = "Interval otomatis jual semua inventory (menit).",
+    Default     = 5,
+    Min         = 1,
+    Max         = 60,
+    Rounding    = 0,
+    Callback    = function(v) State.AutoSellDelay = v end,
 })
 
-CenterShakeToggle:OnChanged(function(value)
-    scriptState.centerShake = value
-end)
-
-local AlwaysProgressingToggle = ModificationSection:AddToggle("AlwaysProgressing", {
-    Title = "Always Progressing",
-    Description = "Makes progress bar always move forward",
-    Default = false
+Tabs.Utilities:AddToggle("AutoSell", {
+    Title       = "Auto Sell All",
+    Description = "Otomatis jual semua inventory sesuai delay.",
+    Default     = false,
+    Callback    = function(v) State.AutoSell = v end,
 })
 
-AlwaysProgressingToggle:OnChanged(function(value)
-    scriptState.alwaysProgressing = value
-end)
+Tabs.Utilities:AddSection("Starfall")
 
-local AntiProgressLossToggle = ModificationSection:AddToggle("AntiProgressLoss", {
-    Title = "Anti Progress Loss",
-    Description = "Prevents progress bar from going backwards",
-    Default = false
+Tabs.Utilities:AddParagraph({
+    Title   = "Star Crater Status",
+    Content = "Aktifkan toggle di bawah untuk auto ambil Star Crater saat muncul di map.",
 })
 
-AntiProgressLossToggle:OnChanged(function(value)
-    scriptState.antiProgressLoss = value
-end)
-
--- Utilities Tab - Boat Section
-local BoatSection = UtilitiesTab:AddSection("Boat")
-
-local SuperBoatToggle = BoatSection:AddToggle("SuperBoat", {
-    Title = "Super Boat",
-    Description = "Increases boat speed significantly",
-    Default = false
+Tabs.Utilities:AddToggle("AutoCollectStar", {
+    Title       = "Auto Collect Star Crater",
+    Description = "Otomatis teleport & kumpulkan Star Crater saat muncul.",
+    Default     = false,
+    Callback    = function(v) State.AutoCollectStar = v end,
 })
 
-SuperBoatToggle:OnChanged(function(value)
-    scriptState.superBoat = value
-    if value then
-        spawn(function()
-            while scriptState.superBoat do
-                wait(0.1)
-                if player.Character and player.Character:FindFirstChild("Humanoid") then
-                    player.Character.Humanoid.WalkSpeed = 50
-                end
-            end
-        end)
-    else
-        if player.Character and player.Character:FindFirstChild("Humanoid") then
-            player.Character.Humanoid.WalkSpeed = 16
+Tabs.Utilities:AddSection("Rods")
+
+Tabs.Utilities:AddDropdown("SelectRod", {
+    Title       = "Select Rod",
+    Description = "Pilih rod yang ingin dibeli.",
+    Values      = RodList,
+    Multi       = false,
+    Default     = 1,
+    Callback    = function(v) State.SelectedRod = v end,
+})
+
+Tabs.Utilities:AddButton({
+    Title       = "Purchase Selected Rod",
+    Description = "Beli rod yang dipilih.",
+    Callback    = function()
+        FireRemote("BuyRod", State.SelectedRod)
+        FireRemote("PurchaseRod", State.SelectedRod)
+        Fluent:Notify({ Title = "Rod", Content = "Mencoba beli: " .. State.SelectedRod, Duration = 3 })
+    end,
+})
+
+Tabs.Utilities:AddSection("Crates")
+
+Tabs.Utilities:AddDropdown("SelectCrate", {
+    Title       = "Select Crate",
+    Description = "Pilih crate yang ingin dibeli.",
+    Values      = CrateList,
+    Multi       = false,
+    Default     = 1,
+    Callback    = function(v) State.SelectedCrate = v end,
+})
+
+Tabs.Utilities:AddSlider("BuyCrateAmount", {
+    Title       = "Buy Crate Amount",
+    Description = "Jumlah crate yang dibeli sekali tekan.",
+    Default     = 1,
+    Min         = 1,
+    Max         = 100,
+    Rounding    = 0,
+    Callback    = function(v) State.BuyCrateAmount = v end,
+})
+
+Tabs.Utilities:AddButton({
+    Title       = "Purchase Selected Crate",
+    Description = "Beli crate sejumlah yang sudah diset.",
+    Callback    = function()
+        for i = 1, State.BuyCrateAmount do
+            FireRemote("BuyCrate", State.SelectedCrate)
+            task.wait(0.08)
         end
-    end
-end)
-
--- Utilities Tab - Selling Section
-local SellingSection = UtilitiesTab:AddSection("Selling")
-
-local SellAllOnCatchToggle = SellingSection:AddToggle("SellAllOnCatch", {
-    Title = "Sell All On Fish Caught",
-    Description = "Automatically sells all fish when catching one",
-    Default = false
+        Fluent:Notify({
+            Title    = "Crate",
+            Content  = string.format("Beli %dx %s", State.BuyCrateAmount, State.SelectedCrate),
+            Duration = 3,
+        })
+    end,
 })
 
-SellAllOnCatchToggle:OnChanged(function(value)
-    scriptState.sellAllOnCatch = value
-end)
+Tabs.Utilities:AddSection("Totems")
 
-local AutoSellDelaySlider = SellingSection:AddSlider("AutoSellDelay", {
-    Title = "Auto Sell All Delay (Minutes)",
-    Description = "Delay between automatic selling",
-    Default = 5,
-    Min = 1,
-    Max = 60,
-    Rounding = 1
+Tabs.Utilities:AddDropdown("SelectTotem", {
+    Title       = "Select Totem",
+    Description = "Pilih totem yang ingin dibeli.",
+    Values      = TotemList,
+    Multi       = false,
+    Default     = 1,
+    Callback    = function(v) State.SelectedTotem = v end,
 })
 
-AutoSellDelaySlider:OnChanged(function(value)
-    scriptState.autoSellDelay = value
-end)
-
-local AutoSellAllToggle = SellingSection:AddToggle("AutoSellAll", {
-    Title = "Auto Sell All",
-    Description = "Automatically sells all fish at set intervals",
-    Default = false
+Tabs.Utilities:AddSlider("BuyTotemAmount", {
+    Title       = "Buy Totem Amount",
+    Description = "Jumlah totem yang dibeli sekali tekan.",
+    Default     = 1,
+    Min         = 1,
+    Max         = 50,
+    Rounding    = 0,
+    Callback    = function(v) State.BuyTotemAmount = v end,
 })
 
-AutoSellAllToggle:OnChanged(function(value)
-    scriptState.autoSellAll = value
-    if value then
-        spawn(function()
-            while scriptState.autoSellAll do
-                wait(scriptState.autoSellDelay * 60)
-                -- Auto sell logic here
-                game:GetService("ReplicatedStorage").events.sellall:FireServer()
-            end
-        end)
-    end
-end)
-
--- Utilities Tab - Starfall Section
-local StarfallSection = UtilitiesTab:AddSection("Starfall")
-
-local StarCraterStatus = StarfallSection:AddParagraph({
-    Title = "Star Crater Status",
-    Content = "Checking for star craters..."
-})
-
-local AutoCollectStarCraterToggle = StarfallSection:AddToggle("AutoCollectStarCrater", {
-    Title = "Auto Collect Star Crater",
-    Description = "Automatically collects star craters when available",
-    Default = false
-})
-
-AutoCollectStarCraterToggle:OnChanged(function(value)
-    scriptState.autoCollectStarCrater = value
-end)
-
--- Utilities Tab - Rods Section
-local RodsSection = UtilitiesTab:AddSection("Rods")
-
-local RodDropdown = RodsSection:AddDropdown("SelectRod", {
-    Title = "Select Rod",
-    Values = {"Basic Rod", "Training Rod", "Carbon Rod", "Fast Rod", "Lucky Rod"},
-    Multi = false,
-    Default = "Basic Rod"
-})
-
-RodDropdown:OnChanged(function(value)
-    scriptState.selectedRod = value
-end)
-
-local PurchaseRodButton = RodsSection:AddButton({
-    Title = "Purchase Selected Rod",
-    Description = "Buys the currently selected rod",
-    Callback = function()
-        -- Purchase rod logic
-        game:GetService("ReplicatedStorage").events.purchase:FireServer(scriptState.selectedRod)
-    end
-})
-
--- Utilities Tab - Crates Section
-local CratesSection = UtilitiesTab:AddSection("Crates")
-
-local CrateDropdown = CratesSection:AddDropdown("SelectCrate", {
-    Title = "Select Crate",
-    Values = {"Basic Crate", "Lucky Crate", "Destiny Crate"},
-    Multi = false,
-    Default = "Basic Crate"
-})
-
-CrateDropdown:OnChanged(function(value)
-    scriptState.selectedCrate = value
-end)
-
-local CrateAmountSlider = CratesSection:AddSlider("CrateAmount", {
-    Title = "Buy Crate Amount",
-    Description = "Number of crates to purchase",
-    Default = 1,
-    Min = 1,
-    Max = 100,
-    Rounding = 1
-})
-
-CrateAmountSlider:OnChanged(function(value)
-    scriptState.crateAmount = value
-end)
-
-local PurchaseCrateButton = CratesSection:AddButton({
-    Title = "Purchase Selected Crate",
-    Description = "Buys the selected amount of crates",
-    Callback = function()
-        for i = 1, scriptState.crateAmount do
-            game:GetService("ReplicatedStorage").events.purchasecrate:FireServer(scriptState.selectedCrate)
-            wait(0.1)
+Tabs.Utilities:AddButton({
+    Title       = "Purchase Selected Totem",
+    Description = "Beli totem sejumlah yang sudah diset.",
+    Callback    = function()
+        for i = 1, State.BuyTotemAmount do
+            FireRemote("BuyTotem", State.SelectedTotem)
+            task.wait(0.08)
         end
-    end
+        Fluent:Notify({
+            Title    = "Totem",
+            Content  = string.format("Beli %dx %s", State.BuyTotemAmount, State.SelectedTotem),
+            Duration = 3,
+        })
+    end,
 })
 
--- Utilities Tab - Totems Section
-local TotemsSection = UtilitiesTab:AddSection("Totems")
+Tabs.Utilities:AddSection("Miscellaneous")
 
-local TotemDropdown = TotemsSection:AddDropdown("SelectTotem", {
-    Title = "Select Totem",
-    Values = {"Sundial Totem", "Eclipse Totem", "Aurora Totem"},
-    Multi = false,
-    Default = "Sundial Totem"
-})
-
-TotemDropdown:OnChanged(function(value)
-    scriptState.selectedTotem = value
-end)
-
-local TotemAmountSlider = TotemsSection:AddSlider("TotemAmount", {
-    Title = "Buy Totem Amount",
-    Description = "Number of totems to purchase",
-    Default = 1,
-    Min = 1,
-    Max = 50,
-    Rounding = 1
-})
-
-TotemAmountSlider:OnChanged(function(value)
-    scriptState.totemAmount = value
-end)
-
-local PurchaseTotemButton = TotemsSection:AddButton({
-    Title = "Purchase Selected Totem",
-    Description = "Buys the selected amount of totems",
-    Callback = function()
-        for i = 1, scriptState.totemAmount do
-            game:GetService("ReplicatedStorage").events.purchasetotem:FireServer(scriptState.selectedTotem)
-            wait(0.1)
-        end
-    end
-})
-
--- Utilities Tab - Miscellaneous Section
-local MiscSection = UtilitiesTab:AddSection("Miscellaneous")
-
-local ShowRadarToggle = MiscSection:AddToggle("ShowRadar", {
-    Title = "Show Radar",
-    Description = "Shows fishing spots on radar",
-    Default = false
-})
-
-ShowRadarToggle:OnChanged(function(value)
-    scriptState.showRadar = value
-end)
-
-local AntiOxygenToggle = MiscSection:AddToggle("AntiOxygen", {
-    Title = "Anti Oxygen",
-    Description = "Prevents oxygen depletion underwater",
-    Default = false
-})
-
-AntiOxygenToggle:OnChanged(function(value)
-    scriptState.antiOxygen = value
-end)
-
-local AntiTemperatureToggle = MiscSection:AddToggle("AntiTemperature", {
-    Title = "Anti Temperature",
-    Description = "Prevents temperature effects",
-    Default = false
-})
-
-AntiTemperatureToggle:OnChanged(function(value)
-    scriptState.antiTemperature = value
-end)
-
-local AntiPressureToggle = MiscSection:AddToggle("AntiPressure", {
-    Title = "Anti Pressure",
-    Description = "Prevents pressure effects",
-    Default = false
-})
-
-AntiPressureToggle:OnChanged(function(value)
-    scriptState.antiPressure = value
-end)
-
--- Teleports Tab
-local TeleportSection = TeleportsTab:AddSection("Teleport Locations")
-
-local TeleportDropdown = TeleportSection:AddDropdown("SelectTeleport", {
-    Title = "Select Teleport Location",
-    Values = {
-        "Spawn", "Moosewood", "Roslit Bay", "Snowcap Island", 
-        "Mushgrove Swamp", "Sunstone Island", "Forsaken Shores",
-        "Ancient Isle", "Statue Of Sovereignty"
-    },
-    Multi = false,
-    Default = "Spawn"
-})
-
-TeleportDropdown:OnChanged(function(value)
-    scriptState.selectedTeleport = value
-end)
-
--- Teleport locations coordinates
-local teleportLocations = {
-    ["Spawn"] = CFrame.new(1, 5, 1),
-    ["Moosewood"] = CFrame.new(387, 135, 283),
-    ["Roslit Bay"] = CFrame.new(-1477, 135, 690),
-    ["Snowcap Island"] = CFrame.new(2648, 135, 2522),
-    ["Mushgrove Swamp"] = CFrame.new(2501, 135, -721),
-    ["Sunstone Island"] = CFrame.new(-942, 135, -1123),
-    ["Forsaken Shores"] = CFrame.new(-2956, 135, 1589),
-    ["Ancient Isle"] = CFrame.new(5931, 135, 4421),
-    ["Statue Of Sovereignty"] = CFrame.new(46, 135, 2158)
-}
-
-local TeleportButton = TeleportSection:AddButton({
-    Title = "Teleport To Selected Location",
-    Description = "Teleports to the selected location",
-    Callback = function()
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local targetCFrame = teleportLocations[scriptState.selectedTeleport]
-            if targetCFrame then
-                player.Character.HumanoidRootPart.CFrame = targetCFrame
+Tabs.Utilities:AddToggle("ShowRadar", {
+    Title       = "Show Radar",
+    Description = "Tampilkan fish radar (persist antar join sejak Feb 2026 update).",
+    Default     = false,
+    Callback    = function(v)
+        State.ShowRadar = v
+        FireRemote("SetRadar", v)
+        FireRemote("ToggleRadar", v)
+        for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+            if gui.Name:lower():find("radar") then
+                pcall(function() gui.Enabled = v end)
             end
         end
-    end
+    end,
 })
 
--- Auto-functions
-spawn(function()
-    while wait(0.1) do
-        -- Star crater detection
-        local starCrater = workspace:FindFirstChild("StarCrater")
-        if starCrater then
-            StarCraterStatus:SetDesc("Star Crater Available!")
-            if scriptState.autoCollectStarCrater then
-                if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                    player.Character.HumanoidRootPart.CFrame = starCrater.CFrame
-                    wait(1)
-                    starCrater:Destroy()
-                end
-            end
+Tabs.Utilities:AddToggle("AntiOxygen", {
+    Title       = "Anti Oxygen",
+    Description = "Cegah oksigen habis (penting di Tidefall underwater).",
+    Default     = false,
+    Callback    = function(v) State.AntiOxygen = v end,
+})
+
+Tabs.Utilities:AddToggle("AntiTemperature", {
+    Title       = "Anti Temperature",
+    Description = "Cegah damage suhu (berguna di Scoria Reach lava zone).",
+    Default     = false,
+    Callback    = function(v) State.AntiTemperature = v end,
+})
+
+Tabs.Utilities:AddToggle("AntiPressure", {
+    Title       = "Anti Pressure",
+    Description = "Cegah damage tekanan di perairan dalam Tidefall.",
+    Default     = false,
+    Callback    = function(v) State.AntiPressure = v end,
+})
+
+-- ============================================================
+--  TELEPORTS TAB
+-- ============================================================
+
+Tabs.Teleports:AddSection("Teleport")
+
+Tabs.Teleports:AddParagraph({
+    Title   = "Lokasi Tersedia (2026)",
+    Content = "Tidefall (Jan) · Scoria Reach (Feb 15) · Lost Jungle + Toxic Grove (Mar 7)\nTekan RightCtrl untuk minimize GUI.",
+})
+
+Tabs.Teleports:AddDropdown("TeleportLocation", {
+    Title       = "Select Teleport Location",
+    Description = "Pilih tujuan teleport.",
+    Values      = TeleportNames,
+    Multi       = false,
+    Default     = 1,
+    Callback    = function(v) State.SelectedTeleport = v end,
+})
+
+Tabs.Teleports:AddButton({
+    Title       = "Teleport To Selected Location",
+    Description = "Teleport karakter ke lokasi yang dipilih.",
+    Callback    = function()
+        local destVec = TeleportLocations[State.SelectedTeleport]
+        if not destVec then return end
+        local root = GetRoot()
+        if root then
+            root.CFrame = CFrame.new(destVec)
+            Fluent:Notify({ Title = "Teleport", Content = "Tiba di: " .. State.SelectedTeleport, Duration = 3 })
         else
-            StarCraterStatus:SetDesc("No Star Crater Found")
+            Fluent:Notify({ Title = "Gagal", Content = "Karakter tidak ditemukan, coba lagi.", Duration = 3 })
         end
-        
-        -- Anti-effects
-        if scriptState.antiOxygen then
-            if player.Character and player.Character:FindFirstChild("OxygenLevel") then
-                player.Character.OxygenLevel.Value = 100
-            end
-        end
-        
-        if scriptState.antiTemperature then
-            if player.Character and player.Character:FindFirstChild("Temperature") then
-                player.Character.Temperature.Value = 0
-            end
-        end
-        
-        if scriptState.antiPressure then
-            if player.Character and player.Character:FindFirstChild("Pressure") then
-                player.Character.Pressure.Value = 0
-            end
-        end
-    end
-end)
+    end,
+})
 
--- Auto shake/reel detection
-spawn(function()
-    while wait() do
-        local gui = player.PlayerGui
-        
-        -- Check for shake UI
-        if scriptState.autoShake and gui:FindFirstChild("shakeui") then
-            local shakeUI = gui.shakeui
-            if shakeUI.Enabled then
-                -- Simulate shake action
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-                wait(0.01)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-            end
-        end
-        
-        -- Check for reel UI
-        if scriptState.autoReel and gui:FindFirstChild("reel") then
-            local reelUI = gui.reel
-            if reelUI.Enabled then
-                -- Auto reel logic
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                wait(0.01)
-                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-            end
-        end
-    end
-end)
-
--- Save Manager Setup
+-- ============================================================
+--  SETTINGS TAB
+-- ============================================================
 SaveManager:SetLibrary(Fluent)
 InterfaceManager:SetLibrary(Fluent)
+InterfaceManager:SetFolder("FischScript2026")
+SaveManager:SetFolder("FischScript2026/configs")
 SaveManager:IgnoreThemeSettings()
 SaveManager:SetIgnoreIndexes({})
-InterfaceManager:SetFolder("FischAutoScript")
-SaveManager:SetFolder("FischAutoScript/saves")
-InterfaceManager:BuildInterfaceSection(UtilitiesTab)
-SaveManager:BuildConfigSection(UtilitiesTab)
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
 
+-- ============================================================
+--  CORE LOGIC
+-- ============================================================
+
+-- Minigame GUI detection
+local function GetFischGui()
+    local pg = LocalPlayer.PlayerGui
+    for _, name in ipairs({"FishingGui","MiniGame","FishingMiniGame","GameGui","Fishing"}) do
+        local g = pg:FindFirstChild(name)
+        if g then return g end
+    end
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            if gui:FindFirstChild("ShakeFrame") or gui:FindFirstChild("ReelFrame")
+            or gui:FindFirstChild("FishingFrame") or gui:FindFirstChild("MiniGameFrame") then
+                return gui
+            end
+        end
+    end
+    return nil
+end
+
+-- VirtualInputManager helper
+local VIM = game:GetService("VirtualInputManager")
+
+local function PressKey(key)
+    pcall(function()
+        VIM:SendKeyEvent(true,  key, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, key, false, game)
+    end)
+end
+
+-- Cast
+local castCooldown = false
+local function TryCast()
+    if castCooldown then return end
+    castCooldown = true
+    FireRemote("Cast")
+    FireRemote("CastRod")
+    FireRemote("StartFishing")
+    PressKey(Enum.KeyCode.E)
+    task.delay(2.5, function() castCooldown = false end)
+end
+
+-- Shake (click / spacebar during minigame)
+local function TryShake()
+    FireRemote("Shake")
+    FireRemote("ShakeInput")
+    PressKey(Enum.KeyCode.Space)
+    -- click GUI button
+    local gui = GetFischGui()
+    if gui then
+        for _, btn in ipairs(gui:GetDescendants()) do
+            if (btn:IsA("TextButton") or btn:IsA("ImageButton")) then
+                pcall(function() btn.Activated:Fire() end)
+                break
+            end
+        end
+    end
+end
+
+-- Reel
+local function TryReel()
+    FireRemote("Reel")
+    FireRemote("ReelFish")
+    FireRemote("PullFish")
+    PressKey(Enum.KeyCode.Space)
+end
+
+-- Sell All
+local function SellAll()
+    FireRemote("SellAll")
+    FireRemote("SellFish")
+    FireRemote("SellInventory")
+    local r = WaitForRemote("Sell", 1)
+    if r and r:IsA("RemoteFunction") then
+        pcall(function() r:InvokeServer("all") end)
+    end
+end
+
+-- Stat killer (Oxygen / Temperature / Pressure)
+local function KillStat(name, maxVal)
+    FireRemote("SetStat", name, maxVal)
+    for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj.Name:lower():find(name:lower()) then
+            if obj:IsA("Frame") then
+                pcall(function() obj.Size = UDim2.new(1,0, obj.Size.Y.Scale,0) end)
+            elseif obj:IsA("TextLabel") then
+                pcall(function() obj.Text = tostring(maxVal) end)
+            end
+        end
+    end
+    local char = LocalPlayer.Character
+    if char then
+        for _, v in ipairs(char:GetDescendants()) do
+            if v.Name:lower():find(name:lower())
+            and (v:IsA("NumberValue") or v:IsA("IntValue")) then
+                pcall(function() v.Value = maxVal end)
+            end
+        end
+    end
+end
+
+-- ── Heartbeat step counter
+local hbAccum = 0
+
+RunService.Heartbeat:Connect(function(dt)
+    -- Auto Cast
+    if State.AutoCast and not castCooldown then TryCast() end
+    -- Auto Shake / Reel
+    if State.AutoShake then TryShake() end
+    if State.AutoReel  then TryReel()  end
+
+    -- Instant Bobber
+    if State.InstantBobber then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Name:lower():find("bobber") then
+                local ow = obj.Parent:FindFirstChild("Owner")
+                if ow and ow.Value == LocalPlayer.Name then
+                    pcall(function() obj.Velocity = Vector3.new(0,-9999,0) end)
+                end
+            end
+        end
+    end
+
+    -- Center Shake
+    if State.CenterShake then
+        local gui = GetFischGui()
+        if gui then
+            for _, obj in ipairs(gui:GetDescendants()) do
+                local n = obj.Name:lower()
+                if (n:find("indicator") or n:find("pointer") or n:find("cursor") or n:find("knob"))
+                and obj:IsA("GuiObject") then
+                    pcall(function()
+                        obj.Position = UDim2.new(0.5, 0, obj.Position.Y.Scale, obj.Position.Y.Offset)
+                    end)
+                end
+            end
+        end
+    end
+
+    -- Progress bar mods
+    if State.AlwaysProgressing or State.AntiProgressLoss then
+        local gui = GetFischGui()
+        if gui then
+            for _, obj in ipairs(gui:GetDescendants()) do
+                local n = obj.Name:lower()
+                if (n:find("progress") or n:find("fill") or n:find("catch")) and obj:IsA("Frame") then
+                    pcall(function()
+                        if State.AlwaysProgressing then
+                            obj.Size = UDim2.new(math.min(obj.Size.X.Scale+0.004, 1), 0, obj.Size.Y.Scale, 0)
+                        end
+                        if State.AntiProgressLoss then
+                            if obj.Size.X.Scale > State.progressCache then
+                                State.progressCache = obj.Size.X.Scale
+                            else
+                                obj.Size = UDim2.new(State.progressCache, 0, obj.Size.Y.Scale, 0)
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+    end
+
+    -- Throttled (every 0.1s)
+    hbAccum += dt
+    if hbAccum >= 0.1 then
+        hbAccum = 0
+
+        if State.AntiOxygen      then KillStat("Oxygen",      100) end
+        if State.AntiTemperature then KillStat("Temperature", 37)  end
+        if State.AntiPressure    then KillStat("Pressure",    0)   end
+
+        -- Super Boat
+        if State.SuperBoat then
+            for _, seat in ipairs(workspace:GetDescendants()) do
+                if seat:IsA("VehicleSeat") then
+                    local ow = seat.Parent:FindFirstChild("Owner") or seat.Parent:FindFirstChild("PlayerName")
+                    if ow and ow.Value == LocalPlayer.Name then
+                        pcall(function()
+                            seat.MaxSpeed  = State.BoatSpeed
+                            seat.Torque    = 10000
+                            seat.TurnSpeed = 4
+                        end)
+                    end
+                end
+            end
+        end
+
+        -- Auto Sell timer
+        if State.AutoSell then
+            if (os.clock() - State.lastSellTime) >= (State.AutoSellDelay * 60) then
+                State.lastSellTime = os.clock()
+                SellAll()
+                Fluent:Notify({ Title = "Auto Sell", Content = "Inventory dijual otomatis.", Duration = 2 })
+            end
+        end
+    end
+end)
+
+-- Star Crater watcher
+local lastStarNotif = 0
+task.spawn(function()
+    while task.wait(5) do
+        local crater = workspace:FindFirstChild("StarCrater")
+        if not crater then
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj.Name:lower():find("crater") or obj.Name:lower():find("starfall") then
+                    crater = obj; break
+                end
+            end
+        end
+        if crater then
+            if State.AutoCollectStar then
+                local cf = crater:IsA("Model") and pcall(function() return crater:GetPivot() end)
+                        or (crater:IsA("BasePart") and crater.CFrame)
+                local root = GetRoot()
+                if root and cf then
+                    if type(cf) == "userdata" then
+                        root.CFrame = cf + Vector3.new(0, 3, 0)
+                    end
+                end
+                FireRemote("CollectStarCrater")
+                FireRemote("CollectCrater")
+                FireRemote("GrabCrater")
+            end
+            if os.clock() - lastStarNotif > 30 then
+                lastStarNotif = os.clock()
+                Fluent:Notify({
+                    Title    = "⭐ Star Crater!",
+                    Content  = "Ditemukan! Auto Collect: " .. (State.AutoCollectStar and "ON" or "OFF"),
+                    Duration = 5,
+                })
+            end
+        end
+    end
+end)
+
+-- Fish caught hook (sell on catch)
+task.spawn(function()
+    local catchRemote
+    for _, name in ipairs({"FishCaught","CaughtFish","OnCatch","FishLanded"}) do
+        catchRemote = WaitForRemote(name, 10)
+        if catchRemote then break end
+    end
+    if catchRemote and catchRemote:IsA("RemoteEvent") then
+        catchRemote.OnClientEvent:Connect(function()
+            castCooldown = false
+            State.progressCache = 0
+            if State.SellOnCatch then
+                task.wait(0.3)
+                SellAll()
+            end
+        end)
+    end
+end)
+
+-- ============================================================
+--  Init
+-- ============================================================
 Window:SelectTab(1)
-SaveManager:LoadAutoloadConfig()
 
--- Notification
 Fluent:Notify({
-    Title = "Fisch Auto Script",
-    Content = "Script loaded successfully! Remember: Use at your own risk.",
-    SubContent = "Educational purposes only",
-    Duration = 5
+    Title    = "Fisch Script 2026",
+    Content  = "Loaded! Tekan RightCtrl untuk toggle GUI.\nSupport: Tidefall · Scoria Reach · Lost Jungle",
+    Duration = 6,
 })
+
+SaveManager:LoadAutoloadConfig()
