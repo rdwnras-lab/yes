@@ -1,6 +1,6 @@
--- Craft A World Script v3.0 — FINAL CORRECT
--- Struktur: Workspace.Tiles (blocks), Workspace.Drops (items), Workspace.Gems
--- Remote: ReplicatedStorage.Remotes.PlayerMovementPackets.[player] :FireServer(Vector2)
+-- Craft A World Script v4.0
+-- PlayerMovementPackets = click-to-move remote
+-- Fire posisi tile → karakter jalan ke sana → server auto break/collect
 -- WARNING: Educational purposes only. Use at your own risk.
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
@@ -9,7 +9,6 @@ local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
 local Workspace         = game:GetService("Workspace")
-local TweenService      = game:GetService("TweenService")
 
 local player    = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
@@ -21,9 +20,7 @@ player.CharacterAdded:Connect(function(char)
 end)
 
 -- ============================================================
--- REMOTE — satu remote untuk semua aksi
--- Path: Remotes > PlayerMovementPackets > [namamu]
--- Kirim: Vector2(X, Y) = posisi tile di dunia
+-- REMOTE — click-to-move + break/collect
 -- ============================================================
 local Remote = nil
 
@@ -39,75 +36,52 @@ local function getRemote()
     return Remote
 end
 
+-- Fire posisi ke server (karakter akan berjalan ke sana)
 local function firePos(x, y)
     local r = getRemote()
     if r then
-        pcall(function()
-            r:FireServer(Vector2.new(x, y))
-        end)
+        pcall(function() r:FireServer(Vector2.new(x, y)) end)
     end
 end
 
+-- Tunggu sampai karakter dekat posisi target
+local function waitUntilNear(targetPos, maxDist, timeout)
+    maxDist = maxDist or 8
+    timeout = timeout or 5
+    local t = 0
+    while t < timeout do
+        if not hrp then break end
+        local dist = (Vector3.new(targetPos.X, targetPos.Y, hrp.Position.Z) - hrp.Position).Magnitude
+        if dist <= maxDist then return true end
+        task.wait(0.1)
+        t = t + 0.1
+    end
+    return false -- timeout
+end
+
 -- ============================================================
--- REFERENSI FOLDER DARI DEX
+-- FOLDER REFERENSI
 -- ============================================================
-local TilesFolder = Workspace:WaitForChild("Tiles", 10)     -- block dunia
-local DropsFolder = Workspace:WaitForChild("Drops", 10)     -- item drop
-local GemsFolder  = Workspace:FindFirstChild("Gems")        -- gem (optional)
+local TilesFolder = Workspace:WaitForChild("Tiles", 10)
+local DropsFolder = Workspace:WaitForChild("Drops", 10)
+local GemsFolder  = Workspace:FindFirstChild("Gems")
 
 -- ============================================================
 -- STATE
 -- ============================================================
 local state = {
     autoClear   = false,
-    autoCollect = false,  -- collect Drops + Gems
-    breakDelay  = 0.05,
-    flySpeed    = 40,
+    autoCollect = false,
+    moveDelay   = 0.3,   -- delay setelah fire sebelum pindah ke tile berikutnya
+    collectLoop = false,
 }
-
--- ============================================================
--- FLY SYSTEM
--- ============================================================
-local bv, bg = nil, nil
-
-local function startFly()
-    if not hrp then return end
-    if bv then bv:Destroy() end
-    if bg then bg:Destroy() end
-    bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
-    bv.Velocity  = Vector3.zero
-    bv.Parent    = hrp
-    bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-    bg.D = 100
-    bg.Parent = hrp
-end
-
-local function stopFly()
-    if bv then bv:Destroy(); bv = nil end
-    if bg then bg:Destroy(); bg = nil end
-end
-
-local function flyToward(targetPos)
-    if not hrp or not bv then return false end
-    local dir  = targetPos - hrp.Position
-    local dist = dir.Magnitude
-    if dist < 2.5 then
-        bv.Velocity = Vector3.zero
-        return true
-    end
-    bv.Velocity = dir.Unit * math.min(state.flySpeed, dist * 6)
-    bg.CFrame   = CFrame.lookAt(hrp.Position, targetPos)
-    return false
-end
 
 -- ============================================================
 -- WINDOW
 -- ============================================================
 local Window = Fluent:CreateWindow({
     Title       = "Craft A World",
-    SubTitle    = "Script v3.0",
+    SubTitle    = "Script v4.0",
     TabWidth    = 160,
     Size        = UDim2.fromOffset(520, 460),
     Acrylic     = true,
@@ -117,39 +91,36 @@ local Window = Fluent:CreateWindow({
 
 local HomeTab = Window:AddTab({ Title = "Home", Icon = "home" })
 
--- ── Header ───────────────────────────────────────────────────
-HomeTab:AddSection("Craft A World - Main"):AddParagraph({
-    Title   = "Script v3.0 ✅",
-    Content = "Remote: PlayerMovementPackets\n"
-            .."Tiles: Workspace.Tiles\n"
-            .."Drops: Workspace.Drops\n"
-            .."Minimize: Right Ctrl"
+HomeTab:AddSection("Info"):AddParagraph({
+    Title   = "Script v4.0 ✅",
+    Content = "Cara kerja:\n→ Fire posisi tile ke PlayerMovementPackets\n→ Karakter jalan ke sana\n→ Server auto break / collect\n\nMinimize: Right Ctrl"
 })
 
 -- ============================================================
--- SECTION: AUTO CLEAR WORLD (break semua tile)
+-- SECTION: AUTO CLEAR WORLD
 -- ============================================================
 local ClearSection = HomeTab:AddSection("Auto Clear World")
 
-local ScanPara = ClearSection:AddParagraph({
+local StatusPara = ClearSection:AddParagraph({
     Title   = "Status",
-    Content = "Idle. Aktifkan toggle untuk mulai break tiles."
+    Content = "Idle."
 })
 
-ClearSection:AddSlider("BreakDelay", {
-    Title    = "Delay antar Break (detik)",
-    Default  = 0.05, Min = 0.02, Max = 1.0, Rounding = 2
-}):OnChanged(function(v) state.breakDelay = v end)
+ClearSection:AddSlider("MoveDelay", {
+    Title       = "Delay per Tile (detik)",
+    Description = "Waktu tunggu setelah fire sebelum pindah tile berikutnya",
+    Default     = 0.3, Min = 0.1, Max = 3.0, Rounding = 1
+}):OnChanged(function(v) state.moveDelay = v end)
 
 local AutoClearToggle = ClearSection:AddToggle("AutoClear", {
     Title       = "Auto Clear World",
-    Description = "Break semua block di Workspace.Tiles secara otomatis",
+    Description = "Karakter otomatis berjalan ke setiap tile dan break",
     Default     = false
 })
+
 AutoClearToggle:OnChanged(function(v)
     state.autoClear = v
     if v then
-        -- Cek apakah folder Tiles ada
         if not TilesFolder then
             TilesFolder = Workspace:FindFirstChild("Tiles")
         end
@@ -159,205 +130,185 @@ AutoClearToggle:OnChanged(function(v)
             AutoClearToggle:SetValue(false)
             return
         end
+        StatusPara:SetDesc("🔨 Auto Clear AKTIF...")
+    else
+        StatusPara:SetDesc("Idle.")
     end
     Fluent:Notify({
-        Title   = "Auto Clear World",
-        Content = v and "✅ AKTIF — Breaking tiles..." or "❌ Dimatikan.",
+        Title   = "Auto Clear",
+        Content = v and "✅ AKTIF" or "❌ Dimatikan",
         Duration = 2
     })
 end)
 
 -- ============================================================
--- SECTION: AUTO COLLECT (Drops + Gems)
+-- SECTION: AUTO COLLECT
 -- ============================================================
 local CollectSection = HomeTab:AddSection("Auto Collect Floating Items")
 
 CollectSection:AddParagraph({
     Title   = "Info",
-    Content = "Ambil otomatis dari:\n• Workspace.Drops (item drop)\n• Workspace.Gems (gem)"
+    Content = "Fire posisi Drops & Gems → karakter jalan ke sana → server collect."
 })
-
-CollectSection:AddSlider("FlySpeed", {
-    Title    = "Kecepatan Terbang",
-    Default  = 40, Min = 5, Max = 150, Rounding = 1
-}):OnChanged(function(v) state.flySpeed = v end)
 
 local AutoCollectToggle = CollectSection:AddToggle("AutoCollect", {
     Title       = "Auto Collect Drops & Gems",
-    Description = "Terbang ke item drop dan gem lalu collect otomatis",
+    Description = "Karakter jalan ke setiap item drop dan gem",
     Default     = false
 })
-
-local flyActive = false
 AutoCollectToggle:OnChanged(function(v)
     state.autoCollect = v
-    if v and not flyActive then
-        startFly()
-        flyActive = true
-    elseif not v and flyActive then
-        stopFly()
-        flyActive = false
-    end
     Fluent:Notify({
         Title   = "Auto Collect",
-        Content = v and "✅ AKTIF — terbang ke drops & gems..." or "❌ Dimatikan.",
+        Content = v and "✅ AKTIF" or "❌ Dimatikan",
         Duration = 2
     })
 end)
 
 -- ============================================================
--- LOOP: Auto Clear — iterate Workspace.Tiles descendants
--- Tiles > Shadow > [unnamed BaseParts] = block dunia
+-- LOOP: Auto Clear
+-- Iterate tile satu per satu, fire posisi, tunggu karakter sampai
 -- ============================================================
 spawn(function()
     while true do
-        task.wait(0.05)
+        task.wait(0.1)
         if not state.autoClear then continue end
         if not TilesFolder then
             TilesFolder = Workspace:FindFirstChild("Tiles")
             task.wait(1)
             continue
         end
+        if not hrp then continue end
 
-        -- Kumpulkan semua BasePart di dalam Tiles
+        -- Kumpulkan semua BasePart di Tiles
         local blocks = {}
         for _, obj in ipairs(TilesFolder:GetDescendants()) do
-            if obj:IsA("BasePart") or obj:IsA("MeshPart") then
+            if (obj:IsA("BasePart") or obj:IsA("MeshPart")) and obj.Parent then
                 table.insert(blocks, obj)
             end
         end
 
-        local count = #blocks
-        if count == 0 then
-            ScanPara:SetDesc("✅ Semua tile sudah di-break!")
+        if #blocks == 0 then
+            StatusPara:SetDesc("✅ Semua tile sudah di-break!")
             state.autoClear = false
             AutoClearToggle:SetValue(false)
-            Fluent:Notify({Title="Auto Clear", Content="✅ World cleared!", Duration=4})
+            Fluent:Notify({Title="✅ Selesai", Content="World cleared!", Duration=5})
             continue
         end
 
-        ScanPara:SetDesc("🔨 Breaking... sisa ±" .. count .. " tile")
+        StatusPara:SetDesc("🔨 Sisa ±" .. #blocks .. " tile")
 
+        -- Sort dari yang terdekat dengan karakter
+        table.sort(blocks, function(a, b)
+            if not a or not b or not hrp then return false end
+            return (a.Position - hrp.Position).Magnitude
+                 < (b.Position - hrp.Position).Magnitude
+        end)
+
+        -- Proses tile satu per satu
         for _, obj in ipairs(blocks) do
             if not state.autoClear then break end
             if not obj or not obj.Parent then continue end
+            if not hrp then continue end
 
-            -- Fire posisi tile ke server (X, Y dari Position)
-            firePos(obj.Position.X, obj.Position.Y)
+            local pos = obj.Position
 
-            task.wait(state.breakDelay)
+            -- Fire posisi tile → karakter jalan ke sana
+            firePos(pos.X, pos.Y)
+
+            -- Tunggu karakter sampai di dekat tile
+            -- (atau timeout setelah state.moveDelay detik)
+            local arrived = waitUntilNear(
+                Vector2.new(pos.X, pos.Y),
+                10,             -- jarak dianggap "sampai" (stud)
+                state.moveDelay -- timeout
+            )
+
+            -- Fire sekali lagi saat sudah dekat untuk memastikan break
+            if arrived then
+                firePos(pos.X, pos.Y)
+                task.wait(0.05)
+            end
+
+            task.wait(0.05) -- jeda kecil antar tile
         end
     end
 end)
 
 -- ============================================================
--- LOOP: Auto Collect — ambil dari Drops dan Gems
+-- LOOP: Auto Collect
 -- ============================================================
 spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.15)
+        if not state.autoCollect then continue end
+        if not hrp then continue end
 
-        if not state.autoCollect then
-            if flyActive then stopFly(); flyActive = false end
-            continue
-        end
-        if not flyActive then startFly(); flyActive = true end
-        if not character or not hrp then continue end
-
-        -- Refresh referensi folder kalau belum ada
         if not DropsFolder then DropsFolder = Workspace:FindFirstChild("Drops") end
         if not GemsFolder  then GemsFolder  = Workspace:FindFirstChild("Gems")  end
 
-        -- Kumpulkan semua target (Drops + Gems)
+        -- Kumpulkan semua target dari Drops dan Gems
         local targets = {}
 
-        if DropsFolder then
-            for _, obj in ipairs(DropsFolder:GetDescendants()) do
-                if obj:IsA("BasePart") or obj:IsA("Model") then
-                    -- Ambil posisi (BasePart langsung atau PrimaryPart model)
-                    local pos = nil
-                    if obj:IsA("BasePart") then
-                        pos = obj.Position
-                    elseif obj:IsA("Model") and obj.PrimaryPart then
-                        pos = obj.PrimaryPart.Position
-                    end
-                    if pos then
-                        table.insert(targets, {pos = pos, obj = obj})
-                    end
+        local function addFromFolder(folder)
+            if not folder then return end
+            for _, obj in ipairs(folder:GetDescendants()) do
+                local pos = nil
+                if obj:IsA("BasePart") then
+                    pos = obj.Position
+                elseif obj:IsA("Model") and obj.PrimaryPart then
+                    pos = obj.PrimaryPart.Position
+                end
+                if pos then
+                    table.insert(targets, pos)
                 end
             end
         end
 
-        if GemsFolder then
-            for _, obj in ipairs(GemsFolder:GetDescendants()) do
-                if obj:IsA("BasePart") or obj:IsA("Model") then
-                    local pos = nil
-                    if obj:IsA("BasePart") then
-                        pos = obj.Position
-                    elseif obj:IsA("Model") and obj.PrimaryPart then
-                        pos = obj.PrimaryPart.Position
-                    end
-                    if pos then
-                        table.insert(targets, {pos = pos, obj = obj})
-                    end
-                end
-            end
-        end
+        addFromFolder(DropsFolder)
+        addFromFolder(GemsFolder)
 
-        if #targets == 0 then
-            -- Tidak ada item — diam
-            if bv then bv.Velocity = Vector3.zero end
-            continue
-        end
+        if #targets == 0 then continue end
 
-        -- Ambil yang terdekat
-        local nearest, nearDist = nil, math.huge
-        for _, t in ipairs(targets) do
-            local dist = (t.pos - hrp.Position).Magnitude
-            if dist < nearDist then
-                nearDist = dist
-                nearest  = t
-            end
-        end
+        -- Sort dari yang terdekat
+        table.sort(targets, function(a, b)
+            if not hrp then return false end
+            return (a - hrp.Position).Magnitude < (b - hrp.Position).Magnitude
+        end)
 
+        -- Ambil yang terdekat dulu
+        local nearest = targets[1]
         if nearest then
-            -- Terbang ke item
-            local arrived = flyToward(nearest.pos + Vector3.new(0, 1, 0))
-
-            -- Saat dekat, fire posisi ke server untuk collect
-            if arrived or nearDist < 5 then
-                firePos(nearest.pos.X, nearest.pos.Y)
-                task.wait(0.05)
-            end
+            -- Fire posisi item → karakter jalan ke sana → server collect
+            firePos(nearest.X, nearest.Y)
+            -- Tunggu karakter sampai
+            waitUntilNear(Vector2.new(nearest.X, nearest.Y), 5, 3)
+            -- Fire lagi untuk confirm collect
+            firePos(nearest.X, nearest.Y)
+            task.wait(0.1)
         end
     end
 end)
 
 -- ============================================================
--- STARTUP — cek remote
+-- STARTUP
 -- ============================================================
 Window:SelectTab(1)
 
 spawn(function()
     task.wait(2)
     local r = getRemote()
-    if r then
-        Fluent:Notify({
-            Title    = "✅ Remote OK",
-            Content  = "PlayerMovementPackets/" .. player.Name .. " terhubung!",
-            Duration = 4
-        })
-    else
-        Fluent:Notify({
-            Title    = "⚠️ Remote Tidak Ditemukan",
-            Content  = "Masuk ke dalam world dulu, baru jalankan script!",
-            Duration = 5
-        })
-    end
+    Fluent:Notify({
+        Title   = r and "✅ Remote OK" or "⚠️ Remote Tidak Ditemukan",
+        Content = r
+            and "PlayerMovementPackets/" .. player.Name .. " terhubung!"
+            or  "Pastikan sudah masuk ke world dulu!",
+        Duration = 4
+    })
 end)
 
 Fluent:Notify({
-    Title    = "Craft A World v3.0",
-    Content  = "Script loaded! Masuk world dulu.",
+    Title    = "Craft A World v4.0",
+    Content  = "Loaded! Masuk world dulu.",
     Duration = 3
 })
